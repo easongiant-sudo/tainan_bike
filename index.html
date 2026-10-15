@@ -1525,6 +1525,11 @@
       ctx.fillStyle = "#fff";
       ctx.font = "bold 30px sans-serif";
       ctx.fillText("🚲 台南騎車生存記", 250, 38);
+      ctx.fillStyle = "#80d8ff";
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText("❓玩法", 488, 38);
+      ctx.textAlign = "center";
       ctx.fillStyle = "#b0bec5";
       ctx.font = "15px sans-serif";
       ctx.fillText("從台南火車站出發，平安又準時地去上課！", 250, 72);
@@ -1571,10 +1576,393 @@
       ctx.fillStyle = "#fff";
       ctx.font = "bold 15px sans-serif";
       if (isTouch()) {
-        ctx.fillText("👆 點選目的地就出發", 250, 572);
+        ctx.fillText("👆 點目的地出發　｜　點標題看玩法說明", 250, 572);
       } else {
-        ctx.fillText("↑↓ 選擇目的地　　空白鍵 出發（也可以直接點）", 250, 572);
+        ctx.fillText("↑↓ 選擇　　空白鍵 出發　　H 玩法說明", 250, 572);
       }
+    }
+
+    // ===== 玩法說明 =====
+
+    let inHelp = false;         // 是否在玩法說明畫面
+    let helpNext = "menu";      // 看完說明要去哪：menu = 回選單、intro = 播開場動畫
+    let pendingDest = 0;        // 選好、準備出發的目的地
+
+    // 有沒有看過說明（記在瀏覽器裡，下次打開就不會再自動跳出來）
+    // 有些瀏覽器不讓網頁存資料，所以也記在變數裡：至少這次打開時只會看到一次
+    let helpSeenThisVisit = false;
+    function helpSeen() {
+      if (helpSeenThisVisit) return true;
+      try {
+        return localStorage.getItem("tainanBikeHelpSeen") === "1";
+      } catch (e) {
+        return false;
+      }
+    }
+    function markHelpSeen() {
+      helpSeenThisVisit = true;
+      try {
+        localStorage.setItem("tainanBikeHelpSeen", "1");
+      } catch (e) {
+        // 瀏覽器不讓存也沒關係，頂多下次再看一次
+      }
+    }
+
+    function showHelp(next) {
+      inMenu = false;
+      inHelp = true;
+      helpNext = next;
+    }
+
+    function closeHelp() {
+      inHelp = false;
+      markHelpSeen();
+      if (helpNext === "intro") {
+        beginIntro();
+      } else {
+        inMenu = true;
+      }
+    }
+
+    // 選好目的地：第一次玩先看說明，然後播開場動畫
+    function requestStart(index) {
+      pendingDest = index;
+      dest = DESTINATIONS[index];
+      if (!helpSeen()) {
+        showHelp("intro");
+      } else {
+        inMenu = false;
+        beginIntro();
+      }
+    }
+
+    function drawHelp() {
+      ctx.fillStyle = "#1b2a38";
+      ctx.fillRect(0, 0, 500, 600);
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 28px sans-serif";
+      ctx.fillText("📖 玩法說明", 250, 36);
+
+      // 每一項：圖示、標題、說明（說明可以有兩行）
+      const items = [
+        ["🎯", "目標", ["從台南火車站騎到成大，在上課前平安抵達校門"]],
+        ["🎮", "操作", ["↑ ▲ 加速　↓ ▼ 煞車（按住）", "← → ◀ ▶ 換車道，最邊邊再按一次騎上人行道"]],
+        ["🧭", "轉彎", ["看上方藍色橫幅 → 切到路面黃色的車道 → 按轉彎方向"]],
+        ["🚦", "紅綠燈", ["紅燈一定要停在停止線前", "闖紅燈會被撞，直接送成大醫院！"]],
+        ["🛵", "小心機車", ["逆向、從後面超車再切進來急煞、巷口衝出、闖紅燈", "注意畫面底部的「⚠️ 後方來車」"]],
+        ["🛡️", "騎慢比較安全", ["時速低於 8 km/h，機車會繞過你，但太慢會遲到"]],
+        ["🧱", "人行道坑洞", ["人行道上有很小的坑洞和翹起的地磚，壓到會摔車"]],
+        ["❤️", "命和評分", ["3 條命，撞到扣 1 條", "剩幾條命拿幾顆星，遲到扣 1 顆"]]
+      ];
+
+      let y = 82;
+      for (const [icon, title, lines] of items) {
+        ctx.textAlign = "center";
+        ctx.font = "24px sans-serif";
+        ctx.fillText(icon, 42, y + 10);
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#ffd740";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText(title, 70, y);
+
+        ctx.fillStyle = "#eceff1";
+        ctx.font = "13px sans-serif";
+        for (let i = 0; i < lines.length; i++) {
+          ctx.fillText(lines[i], 70, y + 21 + i * 18);
+        }
+        y = y + 34 + lines.length * 18;
+      }
+
+      // 下方提示
+      const blink = Math.floor(Date.now() / 500) % 2 === 0;
+      ctx.textAlign = "center";
+      ctx.fillStyle = blink ? "#69f0ae" : "#fff";
+      ctx.font = "bold 16px sans-serif";
+      const action = helpNext === "intro" ? "出發！" : "回到選單";
+      ctx.fillText((isTouch() ? "點一下畫面 " : "按空白鍵 ") + action, 250, 578);
+    }
+
+    // ===== 開場動畫：睡過頭 → 鬧鐘響 → 要遲到了 → 衝出門 =====
+
+    const INTRO_LENGTH = 400;   // 動畫長度（幀），大約 6.7 秒
+    let inIntro = false;
+    let introFrame = 0;
+
+    function beginIntro() {
+      inIntro = true;
+      introFrame = 0;
+    }
+
+    function endIntro() {
+      inIntro = false;
+      startGame(pendingDest);
+    }
+
+    // 鬧鐘上的時間：上課時間 08:10 往前推「這個目的地的時限」
+    function introClockText() {
+      const t = (8 * 3600 + 10 * 60) - timeLimit(dest);
+      const hh = Math.floor(t / 3600);
+      const mm = Math.floor((t % 3600) / 60);
+      const ss = t % 60;
+      return [hh, mm, ss].map(n => String(n).padStart(2, "0")).join(":");
+    }
+
+    // 畫一個 emoji，可以左右翻轉（flip）和旋轉（rot）
+    function drawEmoji(icon, x, y, size, flip, rot) {
+      ctx.save();
+      ctx.translate(x, y);
+      if (rot) ctx.rotate(rot);
+      if (flip) ctx.scale(-1, 1);
+      ctx.font = size + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(icon, 0, 0);
+      ctx.restore();
+    }
+
+    // 畫面下方的字幕
+    function drawCaption(text, color) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.fillRect(0, 500, 500, 56);
+      ctx.fillStyle = color || "#fff";
+      ctx.font = "bold 22px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 250, 528);
+    }
+
+    // 第 1 幕：房間，睡覺 → 鬧鐘響 → 驚醒
+    function drawBedroom(f) {
+      // 牆壁和地板
+      ctx.fillStyle = "#3e4a6b";
+      ctx.fillRect(0, 0, 500, 430);
+      ctx.fillStyle = "#8d6e63";
+      ctx.fillRect(0, 430, 500, 170);
+
+      // 窗戶：外面天剛亮
+      const sky = ctx.createLinearGradient(0, 90, 0, 210);
+      sky.addColorStop(0, "#ffcc80");
+      sky.addColorStop(1, "#ff8a65");
+      ctx.fillStyle = sky;
+      ctx.fillRect(250, 90, 170, 120);
+      ctx.strokeStyle = "#d7ccc8";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(250, 90, 170, 120);
+      ctx.fillStyle = "#d7ccc8";
+      ctx.fillRect(331, 90, 8, 120);
+
+      // 床：床頭、棉被、枕頭
+      ctx.fillStyle = "#6d4c41";
+      ctx.fillRect(420, 300, 28, 140);
+      ctx.fillStyle = "#5c6bc0";
+      ctx.fillRect(170, 360, 255, 75);
+      ctx.fillStyle = "#eceff1";
+      ctx.beginPath();
+      ctx.ellipse(385, 362, 38, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 床頭櫃和鬧鐘
+      ctx.fillStyle = "#795548";
+      ctx.fillRect(40, 370, 100, 65);
+      const ringing = f >= 55;
+      const shake = ringing ? Math.sin(f * 1.6) * 5 : 0;
+      ctx.save();
+      ctx.translate(90 + shake, 345);
+      ctx.fillStyle = "#212121";
+      ctx.fillRect(-42, -22, 84, 44);
+      ctx.fillStyle = "#ff1744";
+      ctx.font = "bold 15px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(introClockText(), 0, 1);
+      ctx.restore();
+
+      // 鬧鐘響：「鈴鈴鈴！」
+      if (ringing && Math.floor(f / 6) % 2 === 0) {
+        ctx.fillStyle = "#ffd740";
+        ctx.font = "bold 26px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("鈴鈴鈴！", 95, 290);
+        ctx.font = "bold 22px sans-serif";
+        ctx.fillText("〰", 25, 330);
+        ctx.fillText("〰", 165, 330);
+      }
+
+      // 玩家：睡覺 😴 → 驚醒 😳（跳起來一下）
+      if (f < 80) {
+        drawEmoji("😴", 383, 342, 46);
+        // 飄起來的 Zzz
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 20px sans-serif";
+        for (let i = 0; i < 3; i++) {
+          const t = (f + i * 20) % 60;
+          ctx.globalAlpha = 1 - t / 60;
+          ctx.fillText("Z", 405 + t * 0.6 + i * 6, 315 - t);
+        }
+        ctx.globalAlpha = 1;
+      } else {
+        const jump = f < 92 ? -Math.sin((f - 80) / 12 * Math.PI) * 30 : 0;
+        drawEmoji("😳", 383, 332 + jump, 52);
+      }
+
+      if (f < 55) {
+        drawCaption("早上的台南…… 還在睡覺");
+      } else {
+        drawCaption("⏰ 鈴鈴鈴！鬧鐘響了！", "#ffd740");
+      }
+    }
+
+    // 第 2 幕：鬧鐘特寫 → 完蛋要遲到了
+    function drawClockCloseUp(f) {
+      ctx.fillStyle = "#263238";
+      ctx.fillRect(0, 0, 500, 600);
+
+      // 大鬧鐘（越來越抖）
+      const shake = f > 140 ? Math.sin(f * 2.1) * 6 : 0;
+      ctx.save();
+      ctx.translate(250 + shake, 200);
+      ctx.fillStyle = "#111";
+      ctx.fillRect(-190, -75, 380, 150);
+      ctx.strokeStyle = "#b0bec5";
+      ctx.lineWidth = 6;
+      ctx.strokeRect(-190, -75, 380, 150);
+      ctx.fillStyle = "#ff1744";
+      ctx.font = "bold 66px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(introClockText(), 0, 4);
+      ctx.restore();
+
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 24px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("📚 第一堂課 08:10", 250, 318);
+      ctx.fillStyle = "#b0bec5";
+      ctx.font = "18px sans-serif";
+      ctx.fillText("地點：" + dest.campus + "・" + dest.building, 250, 350);
+
+      // 驚嚇的臉越來越大
+      if (f > 140) {
+        const grow = Math.min(1, (f - 140) / 20);
+        drawEmoji("😱", 250, 420, 40 + grow * 50);
+        drawCaption("完蛋了！要遲到了！！", "#ff5252");
+      } else {
+        drawCaption("等等…… 現在幾點？");
+      }
+    }
+
+    // 第 3 幕：衝出家門 → 跳上腳踏車 → 出發
+    function drawStreet(f) {
+      // 天空
+      ctx.fillStyle = "#81d4fa";
+      ctx.fillRect(0, 0, 500, 330);
+
+      // 台南的透天厝（一排不同顏色的房子）
+      const houses = [["#ffe0b2", 0], ["#c5e1a5", 120], ["#f8bbd0", 240], ["#b3e5fc", 360]];
+      for (const [color, x] of houses) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x, 110, 120, 220);
+        ctx.fillStyle = "#90a4ae";
+        ctx.fillRect(x + 20, 140, 32, 36);
+        ctx.fillRect(x + 68, 140, 32, 36);
+        ctx.fillRect(x + 20, 200, 32, 36);
+        ctx.fillRect(x + 68, 200, 32, 36);
+        ctx.fillStyle = "#6d4c41";
+        ctx.fillRect(x, 104, 120, 8);
+      }
+      // 自己家的門
+      ctx.fillStyle = "#5d4037";
+      ctx.fillRect(66, 262, 48, 68);
+      ctx.fillStyle = "#ffd740";
+      ctx.fillRect(104, 296, 5, 5);
+
+      // 騎樓、馬路、車道線
+      ctx.fillStyle = "#c8b9a6";
+      ctx.fillRect(0, 330, 500, 50);
+      ctx.fillStyle = "#555";
+      ctx.fillRect(0, 380, 500, 220);
+      ctx.fillStyle = "#fff";
+      for (let x = -40; x < 520; x += 60) {
+        const offset = f > 290 ? ((f - 290) * 6) % 60 : 0;   // 出發後車道線往後跑
+        ctx.fillRect(x - offset, 488, 32, 5);
+      }
+
+      if (f < 260) {
+        // 腳踏車停在路邊
+        drawEmoji("🚲", 300, 405, 54, true);
+        // 玩家從家門跑向腳踏車（跑步時上下彈跳）
+        const t = Math.min(1, (f - 200) / 55);
+        const x = 90 + t * 190;
+        const bounce = Math.abs(Math.sin(f * 0.5)) * -8;
+        drawEmoji("🏃", x, 360 + bounce, 50, true);
+        drawEmoji("🎒", x - 18, 352 + bounce, 22);
+        drawCaption("抓起書包衝出門！");
+      } else if (f < 275) {
+        // 跳上腳踏車
+        drawEmoji("🚲", 300, 405, 54, true);
+        const t = (f - 260) / 15;
+        drawEmoji("🏃", 280 + t * 20, 360 - Math.sin(t * Math.PI) * 40, 50, true);
+        drawCaption("跳上腳踏車！");
+      } else {
+        // 騎上車、加速衝出畫面
+        const t = f - 275;
+        const x = 300 + 0.035 * t * t;
+        drawEmoji("🚴", x, 400, 60, true);
+        // 速度線和煙塵
+        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+        for (let i = 0; i < 4; i++) {
+          const len = Math.min(120, t * 2);
+          ctx.fillRect(x - 50 - len, 382 + i * 12, len, 3);
+        }
+        drawEmoji("💨", x - 55, 420, 28);
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.fillRect(0, 486, 500, 84);
+        ctx.fillStyle = "#ffd740";
+        ctx.font = "bold 26px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("衝啊！🚲", 250, 510);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 17px sans-serif";
+        ctx.fillText("目的地：" + dest.campus + "・" + dest.building +
+                     "　⏰ 剩 " + formatTime(timeLimit(dest)), 250, 546);
+      }
+    }
+
+    function drawIntro() {
+      const f = introFrame;
+      if (f < 110) {
+        drawBedroom(f);
+      } else if (f < 200) {
+        drawClockCloseUp(f);
+      } else {
+        drawStreet(f);
+      }
+
+      // 換場時淡入淡出
+      const fades = [110, 200];
+      let alpha = 0;
+      for (const at of fades) {
+        const d = Math.abs(f - at);
+        if (d < 10) alpha = Math.max(alpha, 1 - d / 10);
+      }
+      if (f > INTRO_LENGTH - 25) alpha = (f - (INTRO_LENGTH - 25)) / 25;
+      if (alpha > 0) {
+        ctx.fillStyle = "rgba(0, 0, 0, " + alpha + ")";
+        ctx.fillRect(0, 0, 500, 600);
+      }
+
+      // 跳過提示
+      ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+      ctx.font = "13px sans-serif";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillText(isTouch() ? "點一下畫面跳過 ⏭" : "空白鍵跳過 ⏭", 490, 588);
     }
 
     // 開始一局：選好目的地後呼叫
@@ -1787,7 +2175,23 @@
       // 換車道只在「剛按下」時算一次，按住不放不會連續換
       if (event.repeat) return;
 
-      // 選單：↑↓ 選目的地，空白鍵出發
+      // 玩法說明：空白鍵、Enter、Esc 繼續
+      if (inHelp) {
+        if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
+          closeHelp();
+        }
+        return;
+      }
+
+      // 開場動畫：空白鍵、Enter、Esc 跳過
+      if (inIntro) {
+        if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
+          endIntro();
+        }
+        return;
+      }
+
+      // 選單：↑↓ 選目的地，空白鍵出發，H 看玩法說明
       if (inMenu) {
         if (event.key === "ArrowUp") {
           menuIndex = (menuIndex - 1 + DESTINATIONS.length) % DESTINATIONS.length;
@@ -1796,7 +2200,10 @@
           menuIndex = (menuIndex + 1) % DESTINATIONS.length;
         }
         if (event.key === " " || event.key === "Enter") {
-          startGame(menuIndex);
+          requestStart(menuIndex);
+        }
+        if (event.key === "h" || event.key === "H") {
+          showHelp("menu");
         }
         return;
       }
@@ -1871,6 +2278,20 @@
 
     // 遊戲迴圈：更新 → 重畫 → 等下一幀 → 再來一次
     function gameLoop() {
+      if (inHelp) {
+        drawHelp();   // 玩法說明
+        requestAnimationFrame(gameLoop);
+        return;
+      }
+      if (inIntro) {
+        introFrame = introFrame + 1;   // 開場動畫一幀一幀往前播
+        drawIntro();
+        if (introFrame >= INTRO_LENGTH) {
+          endIntro();
+        }
+        requestAnimationFrame(gameLoop);
+        return;
+      }
       if (inMenu) {
         drawMenu();   // 選目的地的畫面
         requestAnimationFrame(gameLoop);
@@ -1919,12 +2340,20 @@
       const rect = canvas.getBoundingClientRect();
       const y = (event.clientY - rect.top) * (canvas.height / rect.height);
 
-      if (inMenu) {
+      if (inHelp) {
+        closeHelp();          // 說明畫面：點一下繼續
+      } else if (inIntro) {
+        endIntro();           // 開場動畫：點一下跳過
+      } else if (inMenu) {
+        if (y < 85) {
+          showHelp("menu");   // 點標題區：看玩法說明
+          return;
+        }
         for (let i = 0; i < DESTINATIONS.length; i++) {
           const top = 92 + i * 66;   // 跟 drawMenu 裡卡片的位置一樣
           if (y >= top && y <= top + 60) {
             menuIndex = i;
-            startGame(i);
+            requestStart(i);
             break;
           }
         }
