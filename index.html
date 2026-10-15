@@ -9,26 +9,95 @@
   <!-- 分享到社群網站時顯示的標題、說明、縮圖 -->
   <meta property="og:title" content="台南騎車生存記">
   <meta property="og:description" content="從台南火車站騎腳踏車去成大上課，閃過台南的機車和坑洞，平安又準時地抵達！">
-  <meta property="og:image" content="thumbnail.png">
+  <meta property="og:image" content="https://tainanbike.vercel.app/thumbnail.png">
+  <meta property="og:url" content="https://tainanbike.vercel.app/">
   <meta property="og:type" content="website">
   <style>
     body {
       margin: 0;
       background: #222;
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
+      gap: 12px;
       height: 100vh;
+      height: 100dvh;        /* 手機瀏覽器網址列會伸縮，用 dvh 比較準 */
+      overflow: hidden;
     }
     canvas {
       border: 4px solid #fff;
       max-height: 95vh;  /* 畫面太矮時自動縮小，整個遊戲都看得到 */
       max-width: 95vw;
+      touch-action: none;    /* 在畫面上點擊時，不要讓網頁捲動或縮放 */
+    }
+
+    /* ===== 手機觸控按鈕（電腦上不顯示）===== */
+    #touch {
+      display: none;
+      width: min(95vw, 500px);
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #touch .pad {
+      display: flex;
+      gap: 10px;
+    }
+    #touch .pad.vertical {
+      flex-direction: column;
+      gap: 8px;
+    }
+    #touch button {
+      touch-action: none;
+      width: 72px;
+      height: 64px;
+      border: 2px solid #90a4ae;
+      border-radius: 14px;
+      background: #37474f;
+      color: #fff;
+      font: bold 24px sans-serif;
+    }
+    #touch .pad.vertical button {
+      width: 88px;
+      height: 54px;
+      font-size: 17px;
+    }
+    #touch #btn-ok {
+      width: 70px;
+      font-size: 16px;
+    }
+    #touch button.down {
+      background: #2e7d32;      /* 按住時變綠色 */
+      border-color: #69f0ae;
+    }
+    @media (pointer: coarse) {
+      #touch {
+        display: flex;
+      }
+      canvas {
+        max-height: calc(100dvh - 160px);   /* 留空間給按鈕 */
+      }
     }
   </style>
 </head>
 <body>
   <canvas id="game" width="500" height="600"></canvas>
+
+  <!-- 手機觸控按鈕：data-key 對應鍵盤上的按鍵 -->
+  <div id="touch">
+    <div class="pad">
+      <button data-key="ArrowLeft">◀</button>
+      <button data-key="ArrowRight">▶</button>
+    </div>
+    <button id="btn-ok" data-key=" ">確認</button>
+    <div class="pad vertical">
+      <button data-key="ArrowUp">▲ 加速</button>
+      <button data-key="ArrowDown">▼ 煞車</button>
+    </div>
+  </div>
 
   <script>
     // 取得畫布和「畫筆」
@@ -1443,7 +1512,7 @@
 
       ctx.fillStyle = "#fff";
       ctx.font = "18px sans-serif";
-      ctx.fillText("按 空白鍵 回到選單", 250, 450);
+      ctx.fillText(isTouch() ? "點一下畫面 回到選單" : "按 空白鍵 回到選單", 250, 450);
     }
 
     // 選目的地的畫面
@@ -1501,13 +1570,10 @@
       ctx.textAlign = "center";
       ctx.fillStyle = "#fff";
       ctx.font = "bold 15px sans-serif";
-      ctx.fillText("↑↓ 選擇目的地　　空白鍵 出發", 250, 572);
-
-      // 手機、平板沒有鍵盤 → 提醒用電腦玩
-      if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
-        ctx.fillStyle = "#ffab40";
-        ctx.font = "bold 13px sans-serif";
-        ctx.fillText("📱 本遊戲需要鍵盤操作，請用電腦遊玩", 250, 592);
+      if (isTouch()) {
+        ctx.fillText("👆 點選目的地就出發", 250, 572);
+      } else {
+        ctx.fillText("↑↓ 選擇目的地　　空白鍵 出發（也可以直接點）", 250, 572);
       }
     }
 
@@ -1816,6 +1882,56 @@
       draw();
       requestAnimationFrame(gameLoop);
     }
+
+    // ===== 手機觸控 =====
+
+    // 是不是觸控裝置（手機、平板）
+    function isTouch() {
+      return window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    }
+
+    // 送出一個「假的」鍵盤事件 → 直接沿用上面寫好的鍵盤控制
+    function sendKey(type, key) {
+      document.dispatchEvent(new KeyboardEvent(type, { key: key }));
+    }
+
+    // 觸控按鈕：手指按下 = 按下鍵盤，手指放開 = 放開鍵盤（所以加速、煞車可以按住）
+    for (const btn of document.querySelectorAll("#touch button")) {
+      const key = btn.dataset.key;
+      btn.addEventListener("pointerdown", function (event) {
+        event.preventDefault();
+        btn.classList.add("down");
+        sendKey("keydown", key);
+      });
+      function release() {
+        if (!btn.classList.contains("down")) return;
+        btn.classList.remove("down");
+        sendKey("keyup", key);
+      }
+      btn.addEventListener("pointerup", release);
+      btn.addEventListener("pointercancel", release);
+      btn.addEventListener("pointerleave", release);   // 手指滑出按鈕也算放開
+    }
+
+    // 點畫面：選單時點目的地卡片直接出發；結束畫面點一下回到選單
+    canvas.addEventListener("pointerdown", function (event) {
+      // 畫面可能被縮放過，要把點擊位置換算回遊戲裡的座標
+      const rect = canvas.getBoundingClientRect();
+      const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+
+      if (inMenu) {
+        for (let i = 0; i < DESTINATIONS.length; i++) {
+          const top = 92 + i * 66;   // 跟 drawMenu 裡卡片的位置一樣
+          if (y >= top && y <= top + 60) {
+            menuIndex = i;
+            startGame(i);
+            break;
+          }
+        }
+      } else if (gameOver) {
+        inMenu = true;
+      }
+    });
 
     // 啟動遊戲！
     gameLoop();
