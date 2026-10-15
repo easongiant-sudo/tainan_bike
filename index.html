@@ -2,9 +2,10 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>台南騎車生存記</title>
   <meta name="description" content="從台南火車站騎腳踏車去成大上課！閃過逆向、亂切、闖紅燈的機車和人行道坑洞，平安又準時地抵達教室。">
+  <meta name="theme-color" content="#0d1218">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚲</text></svg>">
   <!-- 分享到社群網站時顯示的標題、說明、縮圖 -->
   <meta property="og:title" content="台南騎車生存記">
@@ -13,29 +14,34 @@
   <meta property="og:url" content="https://tainanbike.vercel.app/">
   <meta property="og:type" content="website">
   <style>
-    body {
+    html, body {
       margin: 0;
-      background: #222;
+      height: 100%;
+    }
+    body {
+      background: radial-gradient(ellipse at top, #24323f 0%, #0d1218 70%);
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       height: 100vh;
       height: 100dvh;        /* 手機瀏覽器網址列會伸縮，用 dvh 比較準 */
       overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
     }
     canvas {
-      border: 4px solid #fff;
-      max-height: 95vh;  /* 畫面太矮時自動縮小，整個遊戲都看得到 */
-      max-width: 95vw;
+      display: block;
+      border: 3px solid rgba(255, 255, 255, 0.9);
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+      background: #000;
       touch-action: none;    /* 在畫面上點擊時，不要讓網頁捲動或縮放 */
     }
 
     /* ===== 手機觸控按鈕（電腦上不顯示）===== */
     #touch {
       display: none;
-      width: min(95vw, 500px);
       justify-content: space-between;
       align-items: center;
       user-select: none;
@@ -52,22 +58,22 @@
     }
     #touch button {
       touch-action: none;
-      width: 72px;
-      height: 64px;
-      border: 2px solid #90a4ae;
+      width: 70px;
+      height: 62px;
+      border: 2px solid #78909c;
       border-radius: 14px;
-      background: #37474f;
+      background: #2f3d47;
       color: #fff;
       font: bold 24px sans-serif;
     }
     #touch .pad.vertical button {
-      width: 88px;
-      height: 54px;
+      width: 86px;
+      height: 52px;
       font-size: 17px;
     }
-    #touch #btn-ok {
-      width: 70px;
-      font-size: 16px;
+    #touch .pad.middle button {
+      width: 66px;
+      font-size: 15px;
     }
     #touch button.down {
       background: #2e7d32;      /* 按住時變綠色 */
@@ -77,14 +83,11 @@
       #touch {
         display: flex;
       }
-      canvas {
-        max-height: calc(100dvh - 160px);   /* 留空間給按鈕 */
-      }
     }
   </style>
 </head>
 <body>
-  <canvas id="game" width="500" height="600"></canvas>
+  <canvas id="game"></canvas>
 
   <!-- 手機觸控按鈕：data-key 對應鍵盤上的按鍵 -->
   <div id="touch">
@@ -92,7 +95,10 @@
       <button data-key="ArrowLeft">◀</button>
       <button data-key="ArrowRight">▶</button>
     </div>
-    <button id="btn-ok" data-key=" ">確認</button>
+    <div class="pad vertical middle">
+      <button data-key="b">🔔</button>
+      <button data-key=" ">確認</button>
+    </div>
     <div class="pad vertical">
       <button data-key="ArrowUp">▲ 加速</button>
       <button data-key="ArrowDown">▼ 煞車</button>
@@ -100,11 +106,407 @@
   </div>
 
   <script>
-    // 取得畫布和「畫筆」
+    // =====================================================================
+    //  台南騎車生存記 v2
+    //  - 畫面用「邏輯座標」500 × 600 來畫，再依螢幕解析度放大，所以永遠清晰
+    //  - 遊戲邏輯固定每秒更新 60 次，在 120Hz / 144Hz 螢幕上速度也一樣
+    // =====================================================================
+
+    // ===== 畫布與畫質 =====
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
+    const W = 500;          // 遊戲世界的寬（邏輯座標，跟螢幕大小無關）
+    const H = 600;          // 遊戲世界的高
+    let renderScale = 1;    // 邏輯座標 → 實際像素的倍率
 
-    // ===== 版面配置（畫布寬 500）=====
+    // 依照視窗大小決定畫布顯示多大，並用螢幕的真實解析度來畫（高解析螢幕不會糊）
+    function resizeCanvas() {
+      const touch = isTouch();
+      const bar = document.getElementById("touch");
+      const availW = window.innerWidth - 16;
+      const availH = window.innerHeight - 16 - (touch ? 140 : 0);
+      const scale = Math.max(0.3, Math.min(availW / W, availH / H));
+      const cssW = Math.floor(W * scale);
+      const cssH = Math.floor(H * scale);
+      canvas.style.width = cssW + "px";
+      canvas.style.height = cssH + "px";
+      bar.style.width = Math.max(cssW, 310) + "px";
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      renderScale = canvas.width / W;
+    }
+
+    // 是不是觸控裝置（手機、平板）
+    function isTouch() {
+      return window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    }
+
+    // ===== 小工具 =====
+    const FONT_FAMILY = '"Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
+    function font(size, weight) {
+      return (weight || "normal") + " " + size + "px " + FONT_FAMILY;
+    }
+
+    // 產生 min ~ max 之間的隨機整數
+    function randomBetween(min, max) {
+      return min + Math.floor(Math.random() * (max - min + 1));
+    }
+    function pick(list) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+    function clamp(v, lo, hi) {
+      return Math.max(lo, Math.min(hi, v));
+    }
+
+    // 圓角矩形的路徑（畫之前呼叫，之後再 fill 或 stroke）
+    function rr(x, y, w, h, r) {
+      r = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+    function circle(x, y, r) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    function ellipse(x, y, rx, ry, rot) {
+      ctx.beginPath();
+      ctx.ellipse(x, y, rx, ry, rot || 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    function line(x1, y1, x2, y2) {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    // 把 #rrggbb 顏色變亮（正數）或變暗（負數）
+    function shade(hex, amt) {
+      const n = parseInt(hex.slice(1), 16);
+      const r = clamp((n >> 16) + amt, 0, 255);
+      const g = clamp(((n >> 8) & 255) + amt, 0, 255);
+      const b = clamp((n & 255) + amt, 0, 255);
+      return "rgb(" + r + "," + g + "," + b + ")";
+    }
+
+    // 固定種子的亂數：每次產生的花紋都一樣
+    function seededRandom(seed) {
+      return function () {
+        seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // ===== 瀏覽器儲存（存不了也沒關係，會記在變數裡）=====
+    const memoryStore = {};
+    function storeGet(key) {
+      try {
+        const v = localStorage.getItem(key);
+        if (v !== null) return v;
+      } catch (e) {}
+      return key in memoryStore ? memoryStore[key] : null;
+    }
+    function storeSet(key, value) {
+      memoryStore[key] = value;
+      try {
+        localStorage.setItem(key, value);
+      } catch (e) {}
+    }
+
+    // ===== 音效：全部用程式「合成」出來，不需要任何音檔 =====
+    const Sound = {
+      ctx: null,
+      master: null,
+      musicBus: null,
+      noiseBuffer: null,
+      muted: false,
+
+      // 瀏覽器規定：要等玩家按鍵或點擊後才能發出聲音
+      unlock() {
+        if (!this.ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return;
+          this.ctx = new AC();
+          this.master = this.ctx.createGain();
+          this.master.connect(this.ctx.destination);
+          this.musicBus = this.ctx.createGain();
+          this.musicBus.gain.value = 0.55;
+          this.musicBus.connect(this.master);
+          // 一秒鐘的白噪音，用來做撞擊、煞車、腳步聲
+          const len = this.ctx.sampleRate;
+          this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+          const data = this.noiseBuffer.getChannelData(0);
+          for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+          this.applyMute();
+        }
+        if (this.ctx.state === "suspended") this.ctx.resume();
+      },
+      applyMute() {
+        if (this.master) this.master.gain.value = this.muted ? 0 : 0.8;
+      },
+
+      // 在時間 t 播一個音：頻率、長度、波形、音量、（可選）滑到另一個頻率
+      toneAt(freq, t, dur, type, vol, slideTo, dest) {
+        const osc = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = type || "sine";
+        osc.frequency.setValueAtTime(freq, t);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        osc.connect(g);
+        g.connect(dest);
+        osc.start(t);
+        osc.stop(t + dur + 0.05);
+      },
+      tone(freq, dur, type, vol, delay, slideTo) {
+        if (!this.ctx || this.muted) return;
+        this.toneAt(freq, this.ctx.currentTime + (delay || 0), dur, type, vol, slideTo, this.master);
+      },
+
+      // 濾波後的噪音：可以做出「碰」、「嘶」、「咻」各種聲音
+      noiseAt(t, dur, vol, freq, q, filterType, slideTo, dest) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const f = this.ctx.createBiquadFilter();
+        f.type = filterType || "bandpass";
+        f.frequency.setValueAtTime(freq || 1000, t);
+        if (slideTo) f.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+        f.Q.value = q || 1;
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(vol, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        src.connect(f);
+        f.connect(g);
+        g.connect(dest);
+        src.start(t);
+        src.stop(t + dur + 0.05);
+      },
+      noise(dur, vol, freq, delay, q, filterType, slideTo) {
+        if (!this.ctx || this.muted) return;
+        this.noiseAt(this.ctx.currentTime + (delay || 0), dur, vol, freq, q, filterType, slideTo, this.master);
+      },
+
+      // ----- 各種音效 -----
+      bell()      { this.tone(2350, 0.7, "sine", 0.16); this.tone(3520, 0.5, "sine", 0.05);
+                    this.tone(2350, 0.7, "sine", 0.14, 0.16); this.tone(3520, 0.5, "sine", 0.04, 0.16); },
+      horn()      { for (const d of [0, 0.28]) { this.tone(415, 0.22, "square", 0.05, d); this.tone(523, 0.22, "square", 0.04, d); } },
+      hornShort() { this.tone(440, 0.18, "square", 0.05); this.tone(554, 0.18, "square", 0.04); },
+      crash()     { this.noise(0.5, 0.6, 900, 0, 0.6, "lowpass"); this.tone(110, 0.35, "sine", 0.4, 0, 40);
+                    this.noise(0.2, 0.25, 3500, 0.02, 2); },
+      thud()      { this.tone(140, 0.18, "sine", 0.35, 0, 55); this.noise(0.1, 0.25, 500, 0, 1, "lowpass"); },
+      screech()   { this.noise(0.5, 0.12, 2600, 0, 8, "bandpass", 1800); this.tone(1900, 0.45, "sawtooth", 0.012, 0, 1600); },
+      whoosh()    { this.noise(0.35, 0.3, 500, 0, 1.5, "bandpass", 2500); },
+      coin()      { this.tone(988, 0.09, "square", 0.06); this.tone(1319, 0.3, "square", 0.06, 0.08); },
+      click()     { this.tone(880, 0.04, "square", 0.035); },
+      confirm()   { this.tone(660, 0.08, "square", 0.05); this.tone(990, 0.16, "square", 0.05, 0.07); },
+      alarm()     { for (let k = 0; k < 4; k++) this.tone(1760, 0.05, "square", 0.05, k * 0.08); },
+      gasp()      { this.tone(330, 0.28, "triangle", 0.18, 0, 880); },
+      sting()     { for (const f of [147, 175, 208]) this.tone(f, 0.7, "sawtooth", 0.035); this.tone(73, 0.7, "triangle", 0.2); },
+      step()      { this.noise(0.05, 0.18, 1200, 0, 1.2); },
+      jump()      { this.tone(260, 0.2, "sine", 0.18, 0, 780); },
+      beep()      { this.tone(1250, 0.07, "square", 0.03); },
+      fanfare()   { [523, 659, 784, 1047].forEach((f, i) => this.tone(f, i === 3 ? 0.6 : 0.14, "square", 0.06, i * 0.12));
+                    this.tone(1319, 0.6, "square", 0.03, 0.36); },
+      fail()      { [392, 330, 262, 196].forEach((f, i) => this.tone(f, 0.25, "triangle", 0.18, i * 0.18)); },
+      siren()     { for (let k = 0; k < 6; k++) this.tone(k % 2 ? 740 : 990, 0.38, "sine", 0.12, k * 0.4); }
+    };
+
+    // ===== 背景音樂：簡單的循環小曲（C - Am - F - G）=====
+    const Music = {
+      playing: false,
+      step: 0,
+      nextTime: 0,
+      timer: null,
+      BPM: 108,
+      BASS: [48, 45, 41, 43],
+      MELODY: [
+        [72, 0, 76, 0, 79, 0, 76, 0, 74, 0, 72, 0, 74, 76, 0, 0],
+        [72, 0, 69, 0, 72, 0, 76, 0, 74, 0, 72, 0, 69, 0, 0, 0],
+        [69, 0, 72, 0, 77, 0, 76, 0, 74, 0, 72, 0, 74, 0, 76, 0],
+        [79, 0, 76, 0, 74, 0, 72, 0, 74, 0, 0, 0, 67, 0, 0, 0]
+      ],
+      start() {
+        if (!Sound.ctx || this.playing) return;
+        this.playing = true;
+        this.step = 0;
+        this.nextTime = Sound.ctx.currentTime + 0.12;
+        this.timer = setInterval(() => this.schedule(), 40);
+      },
+      stop() {
+        this.playing = false;
+        if (this.timer) clearInterval(this.timer);
+        this.timer = null;
+      },
+      // 提前一點點把接下來的音符排進時間表，節奏才會穩
+      schedule() {
+        if (!Sound.ctx) return;
+        const stepDur = 60 / this.BPM / 4;
+        while (this.nextTime < Sound.ctx.currentTime + 0.15) {
+          if (!Sound.muted) this.playStep(this.step, this.nextTime, stepDur);
+          this.nextTime += stepDur;
+          this.step = (this.step + 1) % 64;
+        }
+      },
+      playStep(s, t, d) {
+        const bar = Math.floor(s / 16);
+        const i = s % 16;
+        const bus = Sound.musicBus;
+        const midi = n => 440 * Math.pow(2, (n - 69) / 12);
+        // 低音
+        if (i === 0 || i === 6 || i === 8 || i === 14) {
+          Sound.toneAt(midi(this.BASS[bar] + (i === 8 ? 12 : 0)), t, d * 1.8, "triangle", 0.13, null, bus);
+        }
+        // 旋律
+        const m = this.MELODY[bar][i];
+        if (m) Sound.toneAt(midi(m), t, d * 1.6, "square", 0.028, null, bus);
+        // 和弦墊底
+        if (i === 0) {
+          const root = this.BASS[bar] + 24;
+          for (const iv of [0, bar === 1 ? 3 : 4, 7]) Sound.toneAt(midi(root + iv), t, d * 15, "sine", 0.018, null, bus);
+        }
+        // 輕輕的鼓
+        if (i % 4 === 2) Sound.noiseAt(t, 0.04, 0.035, 8000, 0.7, "highpass", null, bus);
+        if (i % 8 === 0) Sound.toneAt(110, t, 0.12, "sine", 0.12, 50, bus);
+      }
+    };
+
+    // ===== 預先畫好的地面花紋（柏油、紅磚、屋頂），重複鋪滿 =====
+    const patterns = {};
+
+    // 先在一張小畫布上畫好花紋（用 2 倍解析度畫，比較清楚），再變成可以重複的圖樣
+    function makePattern(w, h, drawFn) {
+      const c = document.createElement("canvas");
+      c.width = w * 2;
+      c.height = h * 2;
+      const g = c.getContext("2d");
+      g.scale(2, 2);
+      drawFn(g, w, h);
+      const p = ctx.createPattern(c, "repeat");
+      try {
+        if (p.setTransform && window.DOMMatrix) p.setTransform(new DOMMatrix([0.5, 0, 0, 0.5, 0, 0]));
+      } catch (e) {}
+      return p;
+    }
+
+    function initPatterns() {
+      // 柏油：深灰底 + 細小的碎石顆粒 + 補丁 + 裂縫
+      patterns.asphalt = makePattern(128, 128, (g, w, h) => {
+        const rnd = seededRandom(7);
+        g.fillStyle = "#4a4d53";
+        g.fillRect(0, 0, w, h);
+        for (let i = 0; i < 900; i++) {
+          g.fillStyle = rnd() < 0.5 ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.09)";
+          g.fillRect(rnd() * w, rnd() * h, 1 + rnd() * 1.5, 1 + rnd() * 1.5);
+        }
+        for (let i = 0; i < 3; i++) {
+          g.fillStyle = "rgba(0,0,0,0.06)";
+          g.beginPath();
+          g.ellipse(20 + rnd() * 88, 20 + rnd() * 88, 8 + rnd() * 16, 5 + rnd() * 8, rnd() * 3, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.strokeStyle = "rgba(0,0,0,0.2)";
+        g.lineWidth = 0.8;
+        for (let i = 0; i < 2; i++) {
+          let x = 20 + rnd() * 88;
+          let y = 10 + rnd() * 50;
+          g.beginPath();
+          g.moveTo(x, y);
+          for (let k = 0; k < 5; k++) {
+            x += (rnd() - 0.5) * 16;
+            y += rnd() * 12;
+            g.lineTo(x, y);
+          }
+          g.stroke();
+        }
+      });
+
+      // 紅磚人行道（台南很常見的紅磚道）
+      patterns.brick = makePattern(40, 24, (g, w, h) => {
+        const rnd = seededRandom(3);
+        const cols = ["#b0614a", "#a65a44", "#ba6b52", "#9e523d", "#b86650"];
+        g.fillStyle = "#7d4433";
+        g.fillRect(0, 0, w, h);
+        const brick = (x, y, bw) => {
+          g.fillStyle = cols[Math.floor(rnd() * cols.length)];
+          g.fillRect(x + 1, y + 1, bw - 2, 10);
+          g.fillStyle = "rgba(255,255,255,0.07)";
+          g.fillRect(x + 1, y + 1, bw - 2, 2);
+        };
+        brick(0, 0, 20);
+        brick(20, 0, 20);
+        brick(-10, 12, 20);
+        brick(10, 12, 20);
+        brick(30, 12, 20);
+      });
+
+      // 從空中看的透天厝屋頂：水塔、冷氣室外機、盆栽
+      patterns.roof = makePattern(160, 160, (g, w, h) => {
+        const rnd = seededRandom(11);
+        const roofs = ["#a8a29e", "#bdb6ac", "#9ca3af", "#c9b79c", "#8fa39a", "#b6a597", "#d6d3d1", "#a1887f", "#90a4ae"];
+        g.fillStyle = "#57534e";   // 巷弄
+        g.fillRect(0, 0, w, h);
+        let y = 0;
+        while (y < h) {
+          const bh = Math.min(h - y, 32 + Math.floor(rnd() * 30));
+          let x = 0;
+          while (x < w) {
+            const bw = Math.min(w - x, 30 + Math.floor(rnd() * 34));
+            g.fillStyle = roofs[Math.floor(rnd() * roofs.length)];
+            g.fillRect(x + 1.5, y + 1.5, bw - 3, bh - 3);
+            g.strokeStyle = "rgba(255,255,255,0.18)";   // 女兒牆
+            g.lineWidth = 1;
+            g.strokeRect(x + 3, y + 3, bw - 6, bh - 6);
+            if (bw > 18 && bh > 18 && rnd() < 0.45) {   // 不鏽鋼水塔
+              const tx = x + 8 + rnd() * (bw - 16);
+              const ty = y + 8 + rnd() * (bh - 16);
+              g.fillStyle = "#e5e7eb";
+              g.beginPath(); g.arc(tx, ty, 5, 0, Math.PI * 2); g.fill();
+              g.strokeStyle = "#9ca3af";
+              g.beginPath(); g.arc(tx, ty, 5, 0, Math.PI * 2); g.stroke();
+              g.fillStyle = "#cbd5e1";
+              g.beginPath(); g.arc(tx - 1, ty - 1, 2, 0, Math.PI * 2); g.fill();
+            }
+            if (bw > 16 && bh > 14 && rnd() < 0.4) {    // 冷氣室外機
+              g.fillStyle = "#f1f5f9";
+              g.fillRect(x + 5 + rnd() * (bw - 14), y + 5 + rnd() * (bh - 12), 8, 6);
+            }
+            if (bw > 14 && bh > 14 && rnd() < 0.3) {    // 盆栽
+              g.fillStyle = "#4d7c4f";
+              for (let k = 0; k < 3; k++) {
+                g.beginPath();
+                g.arc(x + 6 + rnd() * (bw - 12), y + 6 + rnd() * (bh - 12), 2.5, 0, Math.PI * 2);
+                g.fill();
+              }
+            }
+            x += bw;
+          }
+          y += bh;
+        }
+      });
+    }
+
+    // 用花紋鋪滿一塊區域，而且花紋會跟著地面一起往下捲動
+    function fillScrolling(pattern, period, x, y, w, h) {
+      const off = groundScroll % period;
+      ctx.save();
+      ctx.translate(0, off);
+      ctx.fillStyle = pattern;
+      ctx.fillRect(x, y - off, w, h);
+      ctx.restore();
+    }
+
+    // ===== 版面配置（邏輯座標寬 500）=====
     //  0     60     100      200      300      400    440    500
     //  | 建築 |人行道|  車道0  |  車道1  |  車道2  |人行道| 建築 |
     const lanes = [150, 250, 350];   // 三條車道的中心 x
@@ -116,14 +518,11 @@
       return lanes[lane];
     }
 
-    // 產生 min ~ max 之間的隨機整數
-    function randomBetween(min, max) {
-      return min + Math.floor(Math.random() * (max - min + 1));
-    }
-
     // ===== 第 1 步：道路 =====
-    let roadOffset = 0;  // 虛線目前往下移了多少
-    let speed = 3;       // 目前車速：每一幀移動幾像素（會因踩踏、煞車、滑行而改變）
+    let roadOffset = 0;    // 車道虛線往下移了多少（0 ~ 50）
+    let groundScroll = 0;  // 地面花紋往下移了多少（給柏油、紅磚、屋頂用）
+    let speed = 3;         // 目前車速：每一幀移動幾像素（會因踩踏、煞車、滑行而改變）
+    let frameCount = 0;    // 從打開網頁到現在經過幾幀（動畫用）
 
     // 車速的物理設定（調這些數字就能改變手感）
     const MAX_SPEED = 10;      // 最高速
@@ -133,32 +532,35 @@
     const BRAKE_POWER = 0.1;   // 煞車的力道
     const SAFE_SPEED = 2;      // 低於這個速度（8 km/h），機車會看到你、繞過你，不會撞你
 
-    const SIDEWALK_COLOR = "#c8b9a6";
-    const ROAD_COLOR = "#555";
+    // 地面往下捲動（騎了多遠）
+    function scrollGround(amount) {
+      roadOffset = (roadOffset + amount) % 50;
+      groundScroll = (groundScroll + amount) % 1920;   // 1920 剛好是所有花紋週期的公倍數
+    }
 
     function drawRoad() {
-      // 草地（畫得比畫布大很多，轉彎旋轉畫面時才不會露出空白）
-      ctx.fillStyle = "#7cb342";
-      ctx.fillRect(-1000, -1000, 2500, 2600);
+      // 屋頂（畫得比畫布大很多，轉彎旋轉畫面時才不會露出空白）
+      fillScrolling(patterns.roof, 160, -1000, -1000, 2500, 2600);
 
-      // 人行道
-      ctx.fillStyle = SIDEWALK_COLOR;
-      ctx.fillRect(60, -1000, 40, 2600);
-      ctx.fillRect(400, -1000, 40, 2600);
-
-      // 人行道地磚的縫（跟著往下移，才看得出在前進）
-      ctx.fillStyle = "#b3a38f";
-      for (let y = -1000; y < 1600; y += 25) {
-        ctx.fillRect(60, y + (roadOffset % 25), 40, 2);
-        ctx.fillRect(400, y + (roadOffset % 25), 40, 2);
-      }
+      // 紅磚人行道
+      fillScrolling(patterns.brick, 24, 60, -1000, 40, 2600);
+      fillScrolling(patterns.brick, 24, 400, -1000, 40, 2600);
 
       // 柏油路（中間 300 寬，分成 3 條車道，每條 100）
-      ctx.fillStyle = ROAD_COLOR;
-      ctx.fillRect(100, -1000, 300, 2600);
+      fillScrolling(patterns.asphalt, 128, 100, -1000, 300, 2600);
+
+      // 路緣石
+      ctx.fillStyle = "#c9c9c9";
+      ctx.fillRect(97, -1000, 3, 2600);
+      ctx.fillRect(400, -1000, 3, 2600);
+
+      // 路邊的白色實線
+      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      ctx.fillRect(106, -1000, 3, 2600);
+      ctx.fillRect(391, -1000, 3, 2600);
 
       // 白色虛線車道線
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = "rgba(255,255,255,0.92)";
       ctx.lineWidth = 4;
       ctx.setLineDash([30, 20]);        // 畫 30、空 20
       ctx.lineDashOffset = -roadOffset; // 虛線往下移
@@ -175,11 +577,10 @@
 
     // 腳踏車的資料
     const player = {
-      lane: 1,   // 「目標」車道：0 = 左、1 = 中、2 = 右
+      lane: 1,   // 「目標」車道：-1 ~ 3
       x: 250,    // 目前「實際」的 x 座標（會慢慢滑向目標車道）
       vx: 0,     // 橫向速度（往右為正、往左為負）
       y: 520,    // 垂直位置（靠近畫面下方）
-      size: 50,  // 大小
       tilt: 0    // 車身傾斜角度
     };
 
@@ -187,7 +588,8 @@
     const STEER_FORCE = 0.02;    // 轉向的力道：越大轉越快
     const STEER_DAMPING = 0.8;   // 阻尼：每一幀橫向速度只保留 80%，避免一直左右甩
 
-    let wobbleTime = 0;  // 低速搖晃用的計時
+    let wobbleTime = 0;   // 低速搖晃用的計時
+    let pedalPhase = 0;   // 踩踏板動畫的角度
 
     // 更新車速：踩踏、煞車、滑行
     function updateSpeed() {
@@ -203,7 +605,8 @@
       }
 
       // 限制在最低速和最高速之間
-      speed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
+      speed = clamp(speed, MIN_SPEED, MAX_SPEED);
+      pedalPhase = pedalPhase + speed * 0.13;
     }
 
     // 更新腳踏車：用「力 → 速度 → 位置」的方式滑向目標車道
@@ -230,7 +633,78 @@
       }
     }
 
-    // 畫出腳踏車的函式
+    // 從正上方看的腳踏車和騎士（車頭朝上）
+    function drawBikeSprite(pedal, footDown) {
+      // 影子
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ellipse(4, 6, 14, 31);
+
+      // 輪胎
+      ctx.fillStyle = "#1c1c1c";
+      rr(-2.5, -33, 5, 18, 2.5); ctx.fill();
+      rr(-2.5, 14, 5, 18, 2.5); ctx.fill();
+
+      // 車架
+      ctx.strokeStyle = "#e53935";
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = "round";
+      line(0, -18, 0, 16);
+
+      // 前面的菜籃（台灣學生車的標配）
+      ctx.fillStyle = "rgba(207,216,220,0.3)";
+      rr(-8, -38, 16, 9, 2); ctx.fill();
+      ctx.strokeStyle = "#cfd8dc";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // 腳（踩踏板時左右交替）
+      const k = Math.sin(pedal) * 5;
+      ctx.fillStyle = "#283593";
+      ellipse(-7, -2 + k, 3.6, 8.5);
+      ellipse(7, -2 - k, 3.6, 8.5);
+      ctx.fillStyle = "#eceff1";
+      circle(-7, -9 + k, 2.6);
+      circle(7, -9 - k, 2.6);
+      if (footDown) {
+        // 停下來時，一隻腳踩在地上
+        ctx.fillStyle = "#283593";
+        ellipse(-15, 4, 3.6, 8, -0.5);
+        ctx.fillStyle = "#eceff1";
+        circle(-18, 10, 2.8);
+      }
+
+      // 把手
+      ctx.strokeStyle = "#37474f";
+      ctx.lineWidth = 3;
+      line(-13, -21, 13, -21);
+
+      // 身體（橘色帽 T）
+      ctx.fillStyle = "#ff7043";
+      rr(-13, -7, 26, 17, 8); ctx.fill();
+
+      // 手臂和手
+      ctx.strokeStyle = "#ff7043";
+      ctx.lineWidth = 5;
+      line(-11, -4, -12, -19);
+      line(11, -4, 12, -19);
+      ctx.fillStyle = "#f1c27d";
+      circle(-12, -20, 2.6);
+      circle(12, -20, 2.6);
+
+      // 書包
+      ctx.fillStyle = "#1a237e";
+      rr(-9, 7, 18, 12, 4); ctx.fill();
+      ctx.fillStyle = "#3949ab";
+      rr(-7, 9, 14, 4, 2); ctx.fill();
+
+      // 頭（從上面看是頭髮）
+      ctx.fillStyle = "#3e2723";
+      circle(0, -8, 7.5);
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      circle(-2.5, -10, 3);
+    }
+
+    // 畫出腳踏車
     function drawPlayer() {
       // 無敵時間內閃爍：每 5 幀切換一次「畫 / 不畫」
       if (invincibleTimer > 0 && Math.floor(invincibleTimer / 5) % 2 === 0) {
@@ -246,101 +720,253 @@
       ctx.save();                              // 記住目前的畫布狀態
       ctx.translate(player.x, player.y);       // 把原點移到腳踏車的位置
       ctx.rotate(heading + player.tilt);       // 車頭方向 + 車身傾斜
-      ctx.font = player.size + "px sans-serif";
-      ctx.textAlign = "center";                // 讓 emoji 以 (0, 0) 為中心
-      ctx.textBaseline = "middle";
-      ctx.fillText("🚲", 0, 0);
+      drawBikeSprite(pedalPhase, speed < 0.05 && !turning);
       ctx.restore();                           // 恢復原本的畫布狀態，不影響其他東西
 
-      // 準備轉彎時，頭上顯示箭頭
+      // 準備轉彎時，頭上顯示黃色箭頭
       if (turnQueued !== 0) {
-        ctx.fillStyle = "#ffd740";
-        ctx.font = "bold 28px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(turnQueued === 1 ? "↱" : "↰", player.x, player.y - 42);
+        const bob = Math.sin(frameCount * 0.2) * 3;
+        drawTurnArrow(player.x, player.y - 58 + bob, turnQueued, "#ffd740", 0.7);
       }
     }
 
-    // ===== 第 4.5 步：路邊地標 =====
+    // 路面上的轉彎箭頭（dir：1 = 右轉、-1 = 左轉）
+    function drawTurnArrow(x, y, dir, color, scale) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(dir * (scale || 1), scale || 1);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(-5, 34);
+      ctx.lineTo(-5, -4);
+      ctx.quadraticCurveTo(-5, -18, 9, -18);
+      ctx.lineTo(9, -27);
+      ctx.lineTo(25, -13);
+      ctx.lineTo(9, 1);
+      ctx.lineTo(9, -8);
+      ctx.quadraticCurveTo(5, -8, 5, -4);
+      ctx.lineTo(5, 34);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
 
-    // 地標清單（想加什麼台南景點就加在這裡！）
-    const landmarkList = [
+    // ===== 第 4.5 步：街景（店家招牌、行道樹）=====
+
+    const SHOP_NAMES = ["牛肉湯", "鍋燒意麵", "鹹粥", "豆花", "早餐店", "飲料", "文具", "機車行", "藥局",
+                        "便當", "肉圓", "碗粿", "蝦捲", "冰店", "書局", "麵包", "蚵仔煎", "米糕", "擔仔麵", "咖啡"];
+    const LANDMARKS = [
       { icon: "🏫", name: "成功大學" },
       { icon: "🏯", name: "赤崁樓" },
       { icon: "🏬", name: "林百貨" },
       { icon: "🛕", name: "孔廟" },
-      { icon: "🏰", name: "安平古堡" },
-      { icon: "🏪", name: "便利商店" },
-      { icon: "🍲", name: "牛肉湯" },
-      { icon: "🧋", name: "飲料店" }
+      { icon: "🏰", name: "安平古堡" }
     ];
+    const SIGN_STYLES = [
+      { bg: "#c62828", fg: "#ffeb3b" },
+      { bg: "#fafafa", fg: "#c62828" },
+      { bg: "#1565c0", fg: "#ffffff" },
+      { bg: "#ffd600", fg: "#212121" },
+      { bg: "#2e7d32", fg: "#ffffff" },
+      { bg: "#212121", fg: "#ffca28" }
+    ];
+    const AWNING_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00897b", "#f4511e", "#6d4c41"];
 
-    let scenery = [];      // 目前畫面上的地標
-    let sceneryTimer = 0;  // 計「騎了多遠」：每騎一段距離就生一個新地標
+    let scenery = [];   // 畫面上的店家（shop）和行道樹（tree）
 
-    // 產生一個新地標
-    function spawnScenery() {
-      // 路口範圍內不放地標（那裡是馬路）
-      if (isNearIntersection(-40, 30)) return;
-
-      const index = Math.floor(Math.random() * landmarkList.length);
-      const item = landmarkList[index];
-
-      // 隨機放在左邊或右邊的建築區（中心是 x = 30 或 470）
-      let x;
-      if (Math.random() < 0.5) {
-        x = 30;
-      } else {
-        x = 470;
-      }
-
-      scenery.push({ icon: item.icon, name: item.name, x: x, y: -40 });
-    }
-
-    // 更新地標：計距離、往下移、刪掉離開畫面的
-    function updateScenery() {
-      sceneryTimer = sceneryTimer + speed;   // 加上這一幀騎的距離
-      if (sceneryTimer >= 200) {             // 每騎 200 像素生一個
-        spawnScenery();
-        sceneryTimer = 0;
-      }
-
+    // 某一邊（-1 左、1 右）某一種街景，最上面那一個的 y
+    function sideTop(side, kind) {
+      let top = Infinity;
       for (const s of scenery) {
-        s.y = s.y + speed;        // 跟道路同速往下移
+        if (s.kind === kind && s.side === side) top = Math.min(top, s.y);
       }
-
-      scenery = scenery.filter(s => s.y < 650);
+      return top;
     }
 
-    // 畫出所有地標
-    function drawScenery() {
+    // 把街景補滿到 limitTop（畫面上方外面一點），路口範圍內不放
+    function fillScenery(limitTop, fadeIn) {
+      const I = intersection;
+      for (const side of [-1, 1]) {
+        // 店家：從最上面那間繼續往上蓋
+        let top = sideTop(side, "shop");
+        if (top === Infinity) top = 700;
+        let guard = 0;
+        while (top > limitTop && guard++ < 60) {
+          const isLandmark = Math.random() < 0.12;
+          const lm = isLandmark ? pick(LANDMARKS) : null;
+          const name = lm ? lm.name : pick(SHOP_NAMES);
+          const needed = Array.from(name).length * 15 + 26 + (lm ? 18 : 0);
+          const h = Math.max(randomBetween(80, 130), needed);
+          const bottom = top - randomBetween(0, 6);
+          if (I && bottom > I.y - 205 && bottom - h < I.y + 205) {
+            top = Math.min(top, I.y - 205);   // 跳過路口
+            if (bottom <= I.y - 205) break;
+            continue;
+          }
+          scenery.push({
+            kind: "shop", side: side, y: bottom - h, h: h,
+            awning: pick(AWNING_COLORS), sign: pick(SIGN_STYLES),
+            name: name, icon: lm ? lm.icon : null,
+            fade: fadeIn ? 0 : 1
+          });
+          top = bottom - h;
+        }
+
+        // 行道樹：每隔一段種一棵
+        let treeY = sideTop(side, "tree");
+        if (treeY === Infinity) treeY = 700 - randomBetween(0, 150);
+        guard = 0;
+        while (treeY > limitTop && guard++ < 30) {
+          const y = treeY - randomBetween(150, 280);
+          const r = randomBetween(22, 30);
+          treeY = y;
+          if (I && Math.abs(y - I.y) < 205 + r) continue;
+          scenery.push({
+            kind: "tree", side: side, y: y, r: r,
+            x: (side < 0 ? 56 : 444) + randomBetween(-4, 4),
+            seed: Math.random() * 10,
+            fade: fadeIn ? 0 : 1
+          });
+        }
+      }
+    }
+
+    // 新路口出現時，把會蓋到路口的街景拿掉（那時路口還在畫面外，看不到）
+    function clearSceneryInBand(I) {
+      scenery = scenery.filter(s => {
+        const top = s.kind === "shop" ? s.y : s.y - s.r;
+        const bottom = s.kind === "shop" ? s.y + s.h : s.y + s.r;
+        return bottom < I.y - 205 || top > I.y + 205;
+      });
+    }
+
+    // 更新街景：往下移、刪掉離開畫面的、補上新的
+    function updateScenery(scroll) {
+      for (const s of scenery) {
+        s.y = s.y + scroll;
+        if (s.fade < 1) s.fade = Math.min(1, s.fade + 0.04);
+      }
+      scenery = scenery.filter(s => s.y < 700);
+      fillScenery(-160, false);
+    }
+
+    // 店家：騎樓的遮雨棚 + 直式招牌
+    function drawShop(s) {
+      const left = s.side < 0;
+      ctx.globalAlpha = s.fade;
+
+      // 店與店之間的分界
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.fillRect(left ? 0 : 440, s.y, 60, 2);
+
+      // 遮雨棚（靠人行道那一側），有條紋
+      const ax = left ? 47 : 440;
+      ctx.fillStyle = s.awning;
+      ctx.fillRect(ax, s.y + 4, 13, s.h - 8);
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      for (let y = s.y + 8; y < s.y + s.h - 8; y += 12) {
+        ctx.fillRect(ax, y, 13, 5);
+      }
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.fillRect(left ? 58 : 440, s.y + 4, 2, s.h - 8);
+
+      // 直式招牌
+      const chars = Array.from(s.name);
+      const bx = left ? 12 : 464;
+      const bh = chars.length * 15 + 12 + (s.icon ? 18 : 0);
+      rr(bx, s.y + 7, 24, bh, 4);
+      ctx.fillStyle = s.sign.bg;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.35)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      for (const s of scenery) {
-        ctx.font = "30px sans-serif";
-        ctx.fillText(s.icon, s.x, s.y);        // 圖示
+      let cy = s.y + 7 + 13;
+      if (s.icon) {
+        ctx.font = font(14);
+        ctx.fillText(s.icon, bx + 12, cy);
+        cy += 18;
+      }
+      ctx.fillStyle = s.sign.fg;
+      ctx.font = font(13, "bold");
+      for (const ch of chars) {
+        ctx.fillText(ch, bx + 12, cy);
+        cy += 15;
+      }
+      ctx.globalAlpha = 1;
+    }
 
-        ctx.font = "bold 11px sans-serif";
-        ctx.fillStyle = "#1b3a0a";
-        ctx.fillText(s.name, s.x, s.y + 26);   // 名稱寫在圖示下方
+    // 行道樹的影子（畫在地上）
+    function drawTreeShadow(t) {
+      ctx.globalAlpha = t.fade;
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ellipse(t.x + 9, t.y + 11, t.r, t.r * 0.85);
+      ctx.globalAlpha = 1;
+    }
+
+    // 行道樹的樹冠（畫在最上層：騎到樹下會被遮住，坑洞也比較難看清楚）
+    function drawTreeCanopy(t) {
+      const sway = Math.sin(frameCount * 0.02 + t.seed) * 1.5;
+      const x = t.x + sway;
+      ctx.globalAlpha = 0.86 * t.fade;
+      ctx.fillStyle = "#2e7d32";
+      circle(x, t.y, t.r);
+      ctx.fillStyle = "#388e3c";
+      circle(x - 4, t.y - 4, t.r * 0.74);
+      ctx.fillStyle = "#4caf50";
+      circle(x - 8, t.y - 9, t.r * 0.38);
+      ctx.strokeStyle = "rgba(27,94,32,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, t.y, t.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // 地面這一層的街景：店家、樹影
+    function drawSceneryGround() {
+      for (const s of scenery) {
+        if (s.kind === "shop") drawShop(s);
+        else drawTreeShadow(s);
       }
     }
 
-    // ===== 第 5 步：障礙物（坑洞） =====
+    // 最上層：樹冠
+    function drawSceneryOverhead() {
+      for (const s of scenery) {
+        if (s.kind === "tree") drawTreeCanopy(s);
+      }
+    }
+
+    // ===== 第 5 步：障礙物 =====
 
     let obstacles = [];         // 目前畫面上的障礙物
     let obstacleTimer = 0;      // 計「騎了多遠」
     let nextObstacleTime = 160; // 下一波要再騎多遠才出現（每次隨機決定）
 
+    // 機車、汽車的外觀（顏色隨機，每台都不一樣）
+    const SCOOTER_COLORS = ["#e53935", "#f5f5f5", "#1e88e5", "#263238", "#f06292", "#43a047", "#fdd835", "#8e24aa", "#90a4ae", "#ff7043"];
+    const HELMET_COLORS = ["#fdd835", "#fafafa", "#e53935", "#1e88e5", "#212121", "#ff9800", "#ec407a", "#26c6da"];
+    const SHIRT_COLORS = ["#455a64", "#8d6e63", "#5c6bc0", "#26a69a", "#ef5350", "#eceff1", "#78909c", "#ab47bc"];
+    const CAR_COLORS = ["#f5f5f5", "#9e9e9e", "#263238", "#c62828", "#1565c0", "#6d4c41", "#fdd835"];
+
+    function giveLook(o) {
+      o.color = pick(SCOOTER_COLORS);
+      o.helmet = pick(HELMET_COLORS);
+      o.shirt = pick(SHIRT_COLORS);
+      return o;
+    }
+    function giveCarLook(o) {
+      o.color = pick(CAR_COLORS);
+      o.taxi = o.color === "#fdd835";   // 黃色就是計程車
+      return o;
+    }
+
     // 人行道上的坑洞（馬路是平的，凹凸不平的是人行道）
     // 很小、顏色跟地磚很像，要仔細看才看得到
     function spawnPothole() {
-      let lane;
-      if (Math.random() < 0.5) {
-        lane = -1;   // 左邊人行道
-      } else {
-        lane = 3;    // 右邊人行道
-      }
+      const lane = Math.random() < 0.5 ? -1 : 3;
       obstacles.push({
         type: "pothole",
         lane: lane,
@@ -350,18 +976,31 @@
       });
     }
 
+    // 違停在人行道上的機車（台南人行道的日常）
+    function spawnParked() {
+      const lane = Math.random() < 0.5 ? -1 : 3;
+      obstacles.push(giveLook({
+        type: "parked",
+        lane: lane,
+        x: laneX(lane) + randomBetween(-4, 4),
+        y: -50,
+        angle: (Math.random() - 0.5) * 0.6,
+        noRider: true
+      }));
+    }
+
     // ===== 第 7 步：會動的障礙物 =====
 
     // 逆向機車：迎面衝過來
     function spawnWrongWay() {
       const lane = Math.floor(Math.random() * 3);
-      obstacles.push({
+      obstacles.push(giveLook({
         type: "wrongway",
         lane: lane,
         x: lanes[lane],
         y: -60,
         ownSpeed: randomBetween(2, 4)   // 機車自己的車速（朝你衝過來）
-      });
+      }));
     }
 
     // 亂切機車：跟你同方向。機車比腳踏車快，所以通常是從後面追上來超車，
@@ -371,7 +1010,7 @@
     function makeSwerver(lane) {
       if (speed < 6) {
         // 一般情況：從後面（畫面下方外面）追上來
-        return {
+        return giveLook({
           type: "swerver",
           lane: lane,
           x: laneX(lane),
@@ -380,10 +1019,10 @@
           targetSpeed: 0,
           phase: "overtake",
           timer: 0
-        };
+        });
       }
       // 你騎很快：機車追不上你 → 改成在前方慢慢騎、亂切車道
-      return {
+      return giveLook({
         type: "swerver",
         lane: lane,
         x: laneX(lane),
@@ -392,24 +1031,18 @@
         targetSpeed: 2,
         phase: "slow",
         timer: randomBetween(30, 70)
-      };
+      });
     }
 
     function spawnSwerver() {
       // 從你「旁邊」的車道超車（同一條車道會直接追撞你，現實中會繞開）
       const choices = [0, 1, 2].filter(l => l !== player.lane);
-      const lane = choices[Math.floor(Math.random() * choices.length)];
-      obstacles.push(makeSwerver(lane));
+      obstacles.push(makeSwerver(pick(choices)));
     }
 
     // 騎人行道的機車：在人行道上從後面超車，然後切進馬路
     function spawnSidewalkRider() {
-      let lane;
-      if (Math.random() < 0.5) {
-        lane = -1;   // 左邊人行道
-      } else {
-        lane = 3;    // 右邊人行道
-      }
+      let lane = Math.random() < 0.5 ? -1 : 3;
       if (lane === player.lane) {
         lane = lane === -1 ? 3 : -1;   // 你也在那邊人行道 → 換另一邊
       }
@@ -418,12 +1051,7 @@
 
     // 從巷口（騎樓）衝出來，橫越人行道和馬路
     function spawnAlleyCrosser() {
-      let dir;
-      if (Math.random() < 0.5) {
-        dir = 1;     // 從左邊衝出來，往右
-      } else {
-        dir = -1;    // 從右邊衝出來，往左
-      }
+      const dir = Math.random() < 0.5 ? 1 : -1;   // 1 = 從左邊衝出來往右
       const startX = dir === 1 ? 30 : 470;
       const crossSpeed = 5;
 
@@ -432,18 +1060,19 @@
       let distanceAhead = speed * (framesToReach + randomBetween(-8, 15));
       distanceAhead = Math.max(distanceAhead, 120);   // 不要近到根本閃不掉
 
-      obstacles.push({
+      obstacles.push(giveLook({
         type: "crosser",
-        icon: "🛵",
+        kind: "scooter",
         label: "巷口衝出！",
-        color: "#ff9100",
+        color2: "#ff9100",
         x: startX,
         y: player.y - distanceAhead,
         vx: crossSpeed * dir,
         hitW: 36,
         hitH: 26,
         hitMsg: "🛵 被巷口衝出的機車撞了！"
-      });
+      }));
+      Sound.hornShort();
     }
 
     // 產生一波障礙物：隨機決定是哪一種
@@ -455,43 +1084,43 @@
       // 先擲骰子決定想生什麼；不能生的話就改生人行道坑洞
       const roll = Math.random();   // 0 ~ 1
       if (roll < 0.2) {
-        // 逆向機車
         if (!hasScooter) spawnWrongWay();
         else spawnPothole();
       } else if (roll < 0.36) {
-        // 亂切機車
         if (!hasScooter) spawnSwerver();
         else spawnPothole();
       } else if (roll < 0.5) {
-        // 騎人行道的機車
         if (!hasScooter) spawnSidewalkRider();
         else spawnPothole();
       } else if (roll < 0.62) {
         // 巷口衝出（騎太慢時不出現，因為它是算好時間衝向你的）
         if (!hasCrosser && speed > 1.5) spawnAlleyCrosser();
         else spawnPothole();
+      } else if (roll < 0.74) {
+        spawnParked();
       } else {
-        // 人行道坑洞
         spawnPothole();
       }
     }
 
     // 依照種類，移動一個障礙物（scroll = 地面這一幀往下移多少）
     function moveObstacle(o, scroll) {
-      if (o.type === "pothole") {
-        // 坑洞是路的一部分，跟路同速
+      if (o.type === "pothole" || o.type === "parked") {
+        // 坑洞、違停機車是固定在地上的，跟路同速
         o.y = o.y + scroll;
       } else if (o.type === "wrongway") {
         // 逆向：你往前騎 + 它往你衝 → 兩個速度相加，所以特別快
         o.y = o.y + scroll + o.ownSpeed;
+        if (!o.honked && o.y > 10) {
+          o.honked = true;
+          Sound.horn();   // 叭叭！
+        }
 
         // 你騎很慢時，它看得到你 → 快接近時換到旁邊的車道繞過你
         const ahead = player.y - o.y;   // 它在你前方多遠
         if (speed < SAFE_SPEED && ahead > 0 && ahead < 220 && Math.abs(o.x - player.x) < 60) {
           const choices = [o.lane - 1, o.lane + 1].filter(l => l >= 0 && l <= 2 && Math.abs(laneX(l) - player.x) >= 60);
-          if (choices.length > 0) {
-            o.lane = choices[Math.floor(Math.random() * choices.length)];
-          }
+          if (choices.length > 0) o.lane = pick(choices);
         }
         o.x = o.x + (laneX(o.lane) - o.x) * 0.05;   // 平滑地滑到新車道（數字越小越慢）
       } else if (o.type === "swerver") {
@@ -502,7 +1131,8 @@
         if (o.phase === "overtake") {
           // 已經超過你、在你前方 80 像素 → 突然切進你的車道（沒打方向燈），一邊切一邊煞車
           if (o.y < player.y - 80) {
-            o.lane = Math.max(0, Math.min(2, player.lane));   // 只切進馬路的車道
+            o.fromLane = o.lane;
+            o.lane = clamp(player.lane, 0, 2);   // 只切進馬路的車道
             o.phase = "cutin";
             o.targetSpeed = 0.5;
           }
@@ -511,6 +1141,7 @@
           if (Math.abs(o.x - laneX(o.lane)) < 6) {
             o.phase = "brake";
             o.timer = randomBetween(60, 110);
+            if (o.y > 0 && o.y < 600) Sound.screech();   // 吱——！
           }
         } else if (o.phase === "brake") {
           o.timer = o.timer - 1;
@@ -522,8 +1153,7 @@
           // 前方慢慢騎的機車：時間到就隨機換車道
           o.timer = o.timer - 1;
           if (o.timer <= 0) {
-            const choices = [o.lane - 1, o.lane + 1].filter(l => l >= 0 && l <= 2);
-            o.lane = choices[Math.floor(Math.random() * choices.length)];
+            o.lane = pick([o.lane - 1, o.lane + 1].filter(l => l >= 0 && l <= 2));
             o.timer = randomBetween(40, 100);
           }
         }
@@ -532,7 +1162,6 @@
         if (o.phase === "cutin" || o.phase === "brake" || o.phase === "leave") {
           o.ownSpeed = o.ownSpeed + (o.targetSpeed - o.ownSpeed) * 0.02;   // 數字越小，加減速越慢
         }
-        // 慢慢滑向目標車道
         o.x = o.x + (laneX(o.lane) - o.x) * 0.03;   // 數字越小，換車道越慢
       } else if (o.type === "crosser") {
         // 橫向衝的車：跟著地面往下，自己再橫向移動
@@ -569,86 +1198,225 @@
 
       // 只保留還在畫面附近的
       obstacles = obstacles.filter(o => {
-        if (o.type === "crosser") {
-          return o.x > -100 && o.x < 600 && o.y < 700;
-        }
-        if (o.type === "swerver") {
-          return o.y < 800 && o.y > -150;   // 從後面追上來的機車，一開始在畫面下方外面
-        }
-        return o.y < 650 && o.y > -150;
+        if (o.type === "crosser") return o.x > -120 && o.x < 620 && o.y < 700;
+        if (o.type === "swerver") return o.y < 800 && o.y > -150;
+        return o.y < 660 && o.y > -150;
       });
     }
 
-    // 畫人行道坑洞：故意畫得很小、顏色接近地磚，不太明顯
+    // ----- 畫障礙物 -----
+
+    // 人行道坑洞：故意畫得很小、顏色接近地磚，不太明顯
     function drawPothole(o) {
       if (o.variant === "hole") {
-        // 小坑洞：比地磚稍微深一點的小橢圓
-        ctx.fillStyle = "#a99a86";
-        ctx.beginPath();
-        ctx.ellipse(o.x, o.y, 10, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#8f806d";
-        ctx.beginPath();
-        ctx.ellipse(o.x, o.y + 1, 6, 3, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillStyle = "#8a4a37";
+        ellipse(o.x, o.y, 10, 6);
+        ctx.fillStyle = "#5e3125";
+        ellipse(o.x, o.y + 1, 6, 3);
       } else {
-        // 翹起來的地磚：歪一點點的方塊，下緣有一條陰影
+        // 翹起來的地磚：歪一點點的磚塊，下緣有陰影
         ctx.save();
         ctx.translate(o.x, o.y);
         ctx.rotate(0.25);
-        ctx.fillStyle = "#d6c8b4";
-        ctx.fillRect(-9, -6, 18, 12);
-        ctx.fillStyle = "#9c8d79";
-        ctx.fillRect(-9, 5, 18, 2);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(-8, -4, 18, 11);
+        ctx.fillStyle = "#c4785d";
+        ctx.fillRect(-9, -6, 18, 11);
         ctx.restore();
       }
     }
 
-    // 畫直向的機車（逆向、亂切、騎人行道）
-    function drawScooter(o) {
-      // 切車道時車身傾斜
-      const tilt = (laneX(o.lane) - o.x) * 0.006;
+    // 從正上方看的機車（車頭朝上）
+    function drawScooterSprite(o, brake, headlight) {
+      // 影子
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ellipse(4, 6, 15, 32);
 
-      ctx.save();
-      ctx.translate(o.x, o.y);
-      ctx.rotate(tilt);
-      ctx.font = "44px sans-serif";
+      // 頭燈光束（逆向車特別顯眼）
+      if (headlight) {
+        const g = ctx.createLinearGradient(0, -30, 0, -100);
+        g.addColorStop(0, "rgba(255,250,200,0.5)");
+        g.addColorStop(1, "rgba(255,250,200,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(-6, -30);
+        ctx.lineTo(-28, -100);
+        ctx.lineTo(28, -100);
+        ctx.lineTo(6, -30);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // 輪胎
+      ctx.fillStyle = "#1c1c1c";
+      rr(-3.5, -33, 7, 13, 3); ctx.fill();
+      rr(-3.5, 20, 7, 13, 3); ctx.fill();
+
+      // 車身、車頭、腳踏板、座墊
+      ctx.fillStyle = o.color;
+      rr(-12, -27, 24, 52, 11); ctx.fill();
+      ctx.fillStyle = shade(o.color, -35);
+      rr(-11, -27, 22, 12, 8); ctx.fill();
+      ctx.fillStyle = "#37474f";
+      rr(-9, -14, 18, 12, 3); ctx.fill();
+      ctx.fillStyle = "#1f1f1f";
+      rr(-8, 0, 16, 20, 6); ctx.fill();
+
+      // 尾燈（煞車時亮紅光）
+      if (brake) {
+        ctx.save();
+        ctx.shadowColor = "#ff1744";
+        ctx.shadowBlur = 16;
+        ctx.fillStyle = "#ff1744";
+        rr(-8, 22, 16, 4, 2); ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = "#8e1b1b";
+        rr(-7, 23, 14, 3.5, 1.5); ctx.fill();
+      }
+
+      // 頭燈
+      ctx.fillStyle = "#fffde7";
+      circle(0, -26, 2.6);
+
+      // 把手和後照鏡
+      ctx.strokeStyle = "#2b2b2b";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      line(-15, -17, 15, -17);
+      ctx.fillStyle = "#2b2b2b";
+      circle(-16, -21, 3);
+      circle(16, -21, 3);
+
+      if (o.noRider) return;   // 違停的機車沒有人
+
+      // 騎士：身體、手臂、安全帽
+      ctx.fillStyle = o.shirt;
+      rr(-11, -6, 22, 16, 7); ctx.fill();
+      ctx.strokeStyle = o.shirt;
+      ctx.lineWidth = 4.5;
+      line(-10, -3, -13, -15);
+      line(10, -3, 13, -15);
+      ctx.fillStyle = "#d7a77b";
+      circle(-13, -16, 2.5);
+      circle(13, -16, 2.5);
+      ctx.fillStyle = o.helmet;
+      circle(0, -5, 8);
+      ctx.fillStyle = "rgba(20,30,40,0.75)";
+      ellipse(0, -10, 5.5, 2.6);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      circle(-2.5, -3, 2.5);
+    }
+
+    // 從正上方看的汽車（車頭朝上）
+    function drawCarSprite(o) {
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
+      ellipse(5, 7, 24, 45);
+      ctx.fillStyle = o.color;
+      rr(-21, -42, 42, 84, 10); ctx.fill();
+      ctx.fillStyle = "rgba(0,0,0,0.12)";
+      rr(-21, -42, 42, 18, 10); ctx.fill();
+      // 車窗、車頂
+      ctx.fillStyle = "rgba(25,40,60,0.88)";
+      rr(-17, -23, 34, 15, 4); ctx.fill();
+      ctx.fillStyle = o.color === "#263238" ? "#37474f" : shade(o.color, 18);
+      rr(-17, -7, 34, 26, 5); ctx.fill();
+      ctx.fillStyle = "rgba(25,40,60,0.8)";
+      rr(-16, 20, 32, 10, 4); ctx.fill();
+      // 車燈
+      ctx.fillStyle = "#fff8c4";
+      rr(-18, -42, 9, 4, 2); ctx.fill();
+      rr(9, -42, 9, 4, 2); ctx.fill();
+      ctx.fillStyle = "#d50000";
+      rr(-18, 38, 9, 4, 2); ctx.fill();
+      rr(9, 38, 9, 4, 2); ctx.fill();
+      // 後照鏡
+      ctx.fillStyle = o.color;
+      rr(-25, -18, 5, 6, 2); ctx.fill();
+      rr(20, -18, 5, 6, 2); ctx.fill();
+      // 計程車的車頂燈
+      if (o.taxi) {
+        ctx.fillStyle = "#fafafa";
+        rr(-9, 1, 18, 8, 2); ctx.fill();
+        ctx.fillStyle = "#212121";
+        ctx.font = font(6, "bold");
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("TAXI", 0, 5);
+      }
+    }
+
+    // 頭上的標籤先記下來，最後才畫（才不會被樹擋住）
+    let tagQueue = [];
+    function queueTag(text, x, y, color) {
+      tagQueue.push({ text: text, x: x, y: y, color: color });
+    }
+    function drawTags() {
+      ctx.font = font(12, "bold");
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("🛵", 0, 0);
+      for (const t of tagQueue) {
+        const w = ctx.measureText(t.text).width + 14;
+        rr(t.x - w / 2, t.y - 10, w, 20, 10);
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fill();
+        ctx.strokeStyle = t.color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = t.color;
+        ctx.fillText(t.text, t.x, t.y + 1);
+      }
+      tagQueue = [];
+    }
+
+    // 畫一台車（機車或汽車），依照行進方向轉向
+    function drawVehicle(o) {
+      let heading = 0;   // 0 = 車頭朝上
+      let lean = 0;
+      if (o.type === "wrongway") {
+        heading = Math.PI;
+        lean = -(laneX(o.lane) - o.x) * 0.006;
+      } else if (o.type === "swerver") {
+        lean = (laneX(o.lane) - o.x) * 0.006;
+      } else if (o.type === "crosser") {
+        heading = o.vx > 0 ? Math.PI / 2 : -Math.PI / 2;
+      } else if (o.type === "parked") {
+        heading = o.angle;
+      }
+
+      const braking = o.type === "swerver" && (o.phase === "brake" || (o.phase === "cutin" && o.ownSpeed < 5));
+      ctx.save();
+      ctx.translate(o.x, o.y);
+      ctx.rotate(heading + lean);
+      if (o.kind === "car") drawCarSprite(o);
+      else drawScooterSprite(o, braking, o.type === "wrongway");
       ctx.restore();
 
       // 頭上的警告標籤
-      let label, color;
+      let label = "";
+      let color = "#fff";
       if (o.type === "wrongway") {
-        label = "逆向！";
-        color = "#ff5252";
-      } else if (o.phase === "brake") {
-        label = "急煞！";
-        color = "#ff5252";
-      } else if (o.lane === -1 || o.lane === 3) {
-        label = "騎人行道！";
-        color = "#ffab40";
-      } else if (o.phase === "overtake") {
-        label = "超車";
-        color = "#fff";
-      } else if (o.phase === "leave") {
-        label = "";
-        color = "#fff";
-      } else {
-        label = "亂切！";
-        color = "#ffd740";
+        label = "逆向！"; color = "#ff5252";
+      } else if (o.type === "swerver") {
+        if (o.phase === "brake") { label = "急煞！"; color = "#ff5252"; }
+        else if (o.lane === -1 || o.lane === 3) { label = "騎人行道！"; color = "#ffab40"; }
+        else if (o.phase === "cutin" || o.phase === "slow") { label = "亂切！"; color = "#ffd740"; }
+        else if (o.phase === "overtake") { label = "超車"; color = "#e0e0e0"; }
+      } else if (o.type === "crosser" && o.label) {
+        label = o.label; color = o.color2;
       }
-      ctx.font = "bold 14px sans-serif";
-      ctx.fillStyle = color;
-      ctx.fillText(label, o.x, o.y - 30);
+      if (label) queueTag(label, o.x, o.y - (o.kind === "car" ? 34 : 40), color);
+    }
 
-      // 急煞時亮煞車燈（車尾一個紅點）
-      if (o.phase === "brake") {
-        ctx.fillStyle = "#ff1744";
-        ctx.beginPath();
-        ctx.arc(o.x, o.y + 18, 5, 0, Math.PI * 2);
-        ctx.fill();
+    // 畫出所有障礙物：先畫地上的（坑洞），再畫車子
+    function drawGroundObstacles() {
+      for (const o of obstacles) {
+        if (o.type === "pothole") drawPothole(o);
+      }
+    }
+    function drawVehicles() {
+      for (const o of obstacles) {
+        if (o.type !== "pothole") drawVehicle(o);
       }
     }
 
@@ -657,48 +1425,125 @@
       if (turning) return;
       for (const o of obstacles) {
         if (o.type === "swerver" && o.y > 600) {
-          ctx.fillStyle = "rgba(183, 28, 28, 0.85)";
-          ctx.fillRect(o.x - 42, 572, 84, 24);
+          const blink = Math.floor(frameCount / 8) % 2 === 0;
+          rr(o.x - 46, 568, 92, 24, 12);
+          ctx.fillStyle = blink ? "rgba(198,40,40,0.95)" : "rgba(120,20,20,0.95)";
+          ctx.fill();
           ctx.fillStyle = "#fff";
-          ctx.font = "bold 13px sans-serif";
+          ctx.font = font(12, "bold");
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText("⚠️ 後方來車", o.x, 584);
+          ctx.fillText("⚠ 後方來車 ▲", o.x, 581);
         }
       }
     }
 
-    // 畫橫向衝的車（巷口衝出、闖紅燈、路口車流）
-    function drawCrosser(o) {
-      ctx.save();
-      ctx.translate(o.x, o.y);
-      if (o.vx > 0) {
-        ctx.scale(-1, 1);   // emoji 預設面向左邊，往右騎就左右翻轉
+    // ===== 特效：碎片、得分飄字、煞車痕、彩帶 =====
+    let particles = [];
+    let popups = [];
+    let skids = [];
+    let confetti = [];
+    let hitFlash = 0;
+
+    // 在 (x, y) 噴出一團碎片
+    function burst(x, y, colors, n, power) {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const v = (0.5 + Math.random()) * power;
+        particles.push({
+          x: x, y: y,
+          vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+          life: 30 + Math.random() * 25, max: 55,
+          size: 1.5 + Math.random() * 3,
+          color: pick(colors)
+        });
       }
-      ctx.font = "40px sans-serif";
+    }
+
+    // 飄起來的文字（例如「好險！+50」）
+    function addPopup(text, x, y, color) {
+      popups.push({ text: text, x: x, y: y, color: color, life: 75 });
+    }
+
+    function spawnConfetti() {
+      for (let i = 0; i < 150; i++) {
+        confetti.push({
+          x: Math.random() * W, y: -20 - Math.random() * 400,
+          vx: (Math.random() - 0.5) * 2, vy: 1.5 + Math.random() * 2.5,
+          rot: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3,
+          w: 5 + Math.random() * 5, h: 3 + Math.random() * 4,
+          color: pick(["#ff5252", "#ffd740", "#69f0ae", "#40c4ff", "#e040fb", "#ffffff"])
+        });
+      }
+    }
+
+    function updateFx(scroll) {
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy + scroll;
+        p.vx *= 0.92;
+        p.vy *= 0.92;
+        p.life--;
+      }
+      particles = particles.filter(p => p.life > 0);
+      for (const p of popups) {
+        p.y += scroll - 0.8;
+        p.life--;
+      }
+      popups = popups.filter(p => p.life > 0);
+      for (const s of skids) {
+        s.y += scroll;
+        s.life--;
+      }
+      skids = skids.filter(s => s.life > 0 && s.y < 700);
+      if (hitFlash > 0) hitFlash--;
+    }
+
+    function updateConfetti() {
+      for (const c of confetti) {
+        c.x += c.vx + Math.sin((frameCount + c.rot * 50) * 0.05) * 0.6;
+        c.y += c.vy;
+        c.rot += c.vr;
+      }
+      confetti = confetti.filter(c => c.y < 640);
+    }
+
+    function drawSkids() {
+      for (const s of skids) {
+        ctx.fillStyle = "rgba(15,15,15," + (s.life / 220 * 0.45) + ")";
+        ctx.fillRect(s.x - 1.5, s.y, 3, s.len);
+      }
+    }
+    function drawParticles() {
+      for (const p of particles) {
+        ctx.globalAlpha = Math.min(1, p.life / 25);
+        ctx.fillStyle = p.color;
+        circle(p.x, p.y, p.size);
+      }
+      ctx.globalAlpha = 1;
+    }
+    function drawPopups() {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(o.icon, 0, 0);
-      ctx.restore();
-
-      if (o.label) {
-        ctx.font = "bold 14px sans-serif";
-        ctx.fillStyle = o.color;
-        ctx.textAlign = "center";
-        ctx.fillText(o.label, o.x, o.y - 28);
+      ctx.font = font(16, "900");
+      for (const p of popups) {
+        ctx.globalAlpha = Math.min(1, p.life / 20);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.75)";
+        ctx.strokeText(p.text, p.x, p.y);
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.text, p.x, p.y);
       }
+      ctx.globalAlpha = 1;
     }
-
-    // 畫出所有障礙物
-    function drawObstacles() {
-      for (const o of obstacles) {
-        if (o.type === "pothole") {
-          drawPothole(o);
-        } else if (o.type === "crosser") {
-          drawCrosser(o);
-        } else {
-          drawScooter(o);
-        }
+    function drawConfetti() {
+      for (const c of confetti) {
+        ctx.save();
+        ctx.translate(c.x, c.y);
+        ctx.rotate(c.rot);
+        ctx.fillStyle = c.color;
+        ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+        ctx.restore();
       }
     }
 
@@ -706,7 +1551,7 @@
 
     const STREET_NAMES = ["中華路", "民族路", "府前路", "海安路", "東寧路", "大學路",
                           "北門路", "中正路", "金華路", "健康路", "成功路", "公園路"];
-    let currentStreet = "中華路";   // 現在騎在哪條路上
+    let currentStreet = "北門路";   // 現在騎在哪條路上
 
     let intersection = null;        // 目前的路口（一次最多一個）
     let intersectionTimer = 0;      // 計「騎了多遠」
@@ -799,7 +1644,6 @@
     let menuIndex = 0;            // 選單目前選到第幾個
     let won = false;              // 是否抵達目的地
 
-    // 目前這一段路線
     function currentSeg() {
       return dest.route[segIndex];
     }
@@ -809,7 +1653,6 @@
       return dest.danger + (currentSeg().dangerBoost || 0);
     }
 
-    // 整條路線的總長度
     function totalLength(d) {
       return d.route.reduce((sum, s) => sum + s.length, 0);
     }
@@ -825,19 +1668,26 @@
       return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
     }
 
+    // 路線完成了幾成（0 ~ 1）
+    function routeProgress() {
+      let done = 0;
+      for (let i = 0; i < segIndex; i++) done += dest.route[i].length;
+      done += Math.min(segDistance, currentSeg().length);
+      return clamp(done / totalLength(dest), 0, 1);
+    }
+
     // 隨機挑一個「不是現在這條」的路名
     function randomStreetName() {
       let name;
       do {
-        name = STREET_NAMES[Math.floor(Math.random() * STREET_NAMES.length)];
+        name = pick(STREET_NAMES);
       } while (name === currentStreet);
       return name;
     }
 
     // 產生一個新路口（isRoute = 是不是導航要你轉彎的路口）
     function spawnIntersection(isRoute) {
-      const lights = ["green", "yellow", "red"];
-      const light = lights[Math.floor(Math.random() * 3)];
+      const light = pick(["green", "yellow", "red"]);
       const seg = currentSeg();
 
       intersection = {
@@ -851,8 +1701,10 @@
         runner: null,                                // 這個路口會不會有人闖紅燈
         isRoute: isRoute,                            // 導航路口：要在這裡轉彎
         hotspot: null,                               // 事故熱點的名字
-        handled: false                               // 已經轉彎或錯過了
+        handled: false,                              // 已經轉彎或錯過了
+        perfectAwarded: false                        // 已經拿過「完美停車」加分
       };
+      clearSceneryInBand(intersection);
 
       // 導航路口：方向和路名照路線走
       if (isRoute) {
@@ -869,7 +1721,7 @@
       const runnerChance = intersection.hotspot ? 1 : Math.min(0.9, 0.35 * currentDanger());
       if (Math.random() < runnerChance) {
         intersection.runner = {
-          row: [-100, 0, 100][randomBetween(0, 2)],  // 從橫向馬路的哪一條車道衝出來
+          row: pick([-100, 0, 100]),                 // 從橫向馬路的哪一條車道衝出來
           dir: Math.random() < 0.5 ? 1 : -1,
           jitter: randomBetween(-12, 20),            // 時間誤差：不一定剛好撞到你
           spawned: false
@@ -885,19 +1737,19 @@
     // 紅燈時：橫向的車流（綠燈方向的正常車輛）
     function spawnCrossCar() {
       const I = intersection;
-      const row = [-100, 0, 100][randomBetween(0, 2)];
       const isCar = Math.random() < 0.5;
-      obstacles.push({
+      const o = {
         type: "crosser",
-        icon: isCar ? "🚗" : "🛵",
+        kind: isCar ? "car" : "scooter",
         label: "",
-        x: I.crossDir === 1 ? -60 : 560,
-        y: I.y + row,
+        x: I.crossDir === 1 ? -70 : 570,
+        y: I.y + pick([-100, 0, 100]),
         vx: I.crossDir * randomBetween(5, 7),
         hitW: isCar ? 44 : 36,
         hitH: 26,
         hitMsg: "🚗 被橫向來車撞了！"
-      });
+      };
+      obstacles.push(isCar ? giveCarLook(o) : giveLook(o));
     }
 
     // 綠燈時：橫向有人闖紅燈，算好時間衝向你
@@ -912,32 +1764,33 @@
       const framesForRunner = Math.abs(player.x - startX) / 6;          // 它衝到你的車道要幾幀
       const framesForMe = (player.y - rowY) / Math.max(speed, 0.3);     // 你騎到那一排要幾幀
       if (framesForMe <= framesForRunner + r.jitter) {
-        obstacles.push({
+        obstacles.push(giveLook({
           type: "crosser",
-          icon: "🛵",
+          kind: "scooter",
           label: "闖紅燈！",
-          color: "#ff5252",
+          color2: "#ff5252",
           x: startX,
           y: rowY,
           vx: 6 * r.dir,
           hitW: 36,
           hitH: 26,
           hitMsg: "🛵 被闖紅燈的機車撞了！"
-        });
+        }));
         r.spawned = true;
         message = "⚠️ 有人闖紅燈！";
         messageTimer = 45;
+        Sound.hornShort();
       }
     }
 
     // 你闖紅燈了：橫向一台車直接衝向你（必定撞到）
     function punishRedLight() {
       const fromLeft = Math.random() < 0.5;
-      obstacles.push({
+      obstacles.push(giveCarLook({
         type: "crosser",
-        icon: "🚗",
+        kind: "car",
         label: "",
-        x: fromLeft ? -60 : 560,
+        x: fromLeft ? -70 : 570,
         y: player.y,
         vx: fromLeft ? 12 : -12,
         hitW: 44,
@@ -945,9 +1798,11 @@
         homing: true,     // 會一直對準你的 y，躲不掉
         fatal: true,      // 撞到直接死亡
         hitMsg: "🚑 闖紅燈被撞了！"
-      });
+      }));
       message = "🚨 你闖紅燈了！";
       messageTimer = 60;
+      Sound.horn();
+      Sound.screech();
     }
 
     // 更新路口：生成、移動、紅綠燈、車流、闖紅燈判定、轉彎
@@ -979,6 +1834,7 @@
       if (I.lightTimer <= 0) {
         I.light = NEXT_LIGHT[I.light];
         I.lightTimer = LIGHT_TIME[I.light];
+        if (!I.passed && !I.passedStopLine && I.y > -300) Sound.beep();
       }
 
       // 4. 你這邊紅燈 = 橫向綠燈 → 橫向有車流
@@ -1002,6 +1858,17 @@
         I.passedStopLine = true;
         if (I.light === "red") {
           punishRedLight();
+        }
+      }
+
+      // 6.5 紅燈時穩穩停在停止線前 → 完美停車加分
+      if (!I.passed && !I.passedStopLine && !I.perfectAwarded && I.light === "red" && speed < 0.05) {
+        const gap = bikeFront - stopLineY;
+        if (gap >= 0 && gap < 60) {
+          I.perfectAwarded = true;
+          stats.perfectStop++;
+          addPopup("完美停車 +100", player.x, player.y - 50, "#69f0ae");
+          Sound.coin();
         }
       }
 
@@ -1079,22 +1946,21 @@
         }
       }
 
-      // 會動的車子直接清掉；坑洞是固定在地上的，換算到新座標
-      obstacles = obstacles.filter(o => o.type === "pothole");
+      // 會動的車子直接清掉；坑洞、違停機車是固定在地上的，換算到新座標
+      obstacles = obstacles.filter(o => o.type === "pothole" || o.type === "parked");
       for (const o of obstacles) {
         const p = toNew(o.x, o.y);
         o.x = p.x;
         o.y = p.y;
-        o.double = false;
+        if (o.type === "parked") o.angle += dir === 1 ? -Math.PI / 2 : Math.PI / 2;
       }
-
-      // 地標也換算過去，掉到新馬路上的就不要
-      for (const s of scenery) {
+      for (const s of skids) {
         const p = toNew(s.x, s.y);
         s.x = p.x;
         s.y = p.y;
       }
-      scenery = scenery.filter(s => s.x < 60 || s.x > 440);
+      particles = [];
+      popups = [];
 
       // 原本騎的那條路 → 變成身後的橫向馬路
       const oldRoad = toNew(250, ey);
@@ -1108,6 +1974,10 @@
         passedStopLine: true,
         runner: null
       };
+
+      // 新街道的店家、行道樹重新長出來（淡入）
+      scenery = [];
+      fillScenery(-160, true);
 
       // 路線前進到下一段
       segIndex = segIndex + 1;
@@ -1124,44 +1994,60 @@
       intersectionTimer = 0;
       obstacleTimer = 0;
 
-      message = "📍 轉進" + newStreet;
-      messageTimer = 90;
+      const seg = currentSeg();
+      message = seg.warning ? "⚠️ " + newStreet + "：" + seg.warning : "📍 轉進" + newStreet;
+      messageTimer = 100;
     }
 
-    // 畫路口：橫向馬路、人行道、斑馬線、停止線、路名牌
+    // 畫路口：橫向馬路、人行道、斑馬線、機車停等區、停止線、路名牌
     function drawIntersection(I) {
-      // 橫向馬路兩側的人行道
-      ctx.fillStyle = SIDEWALK_COLOR;
-      ctx.fillRect(-1000, I.y - 190, 2500, 380);
+      // 橫向馬路兩側的紅磚人行道、橫向馬路、直向馬路穿過去的部分
+      fillScrolling(patterns.brick, 24, -1000, I.y - 190, 2500, 380);
+      fillScrolling(patterns.asphalt, 128, -1000, I.y - 150, 2500, 300);
+      fillScrolling(patterns.asphalt, 128, 100, I.y - 190, 300, 380);
 
-      // 橫向馬路
-      ctx.fillStyle = ROAD_COLOR;
-      ctx.fillRect(-1000, I.y - 150, 2500, 300);
+      // 轉角的路緣石
+      ctx.fillStyle = "#c9c9c9";
+      ctx.fillRect(-1000, I.y - 153, 1100, 3);
+      ctx.fillRect(400, I.y - 153, 1100, 3);
+      ctx.fillRect(-1000, I.y + 150, 1100, 3);
+      ctx.fillRect(400, I.y + 150, 1100, 3);
 
-      // 直向馬路穿過橫向的人行道
-      ctx.fillRect(100, I.y - 190, 300, 380);
-
-      // 直向馬路上的斑馬線（上下各一條）
-      ctx.fillStyle = "#eee";
-      for (let x = 108; x < 400; x += 28) {
-        ctx.fillRect(x, I.y + 152, 14, 36);
-        ctx.fillRect(x, I.y - 188, 14, 36);
+      // 斑馬線
+      ctx.fillStyle = "rgba(238,238,238,0.92)";
+      for (let x = 108; x < 396; x += 28) {
+        ctx.fillRect(x, I.y + 154, 14, 34);
+        ctx.fillRect(x, I.y - 188, 14, 34);
       }
-
-      // 橫向馬路上的斑馬線（左右各一條）
-      for (let y = I.y - 142; y < I.y + 150; y += 28) {
+      for (let y = I.y - 142; y < I.y + 146; y += 28) {
         ctx.fillRect(62, y, 36, 14);
         ctx.fillRect(402, y, 36, 14);
       }
 
-      // 停止線
       if (!I.passed) {
+        // 機車停等區（腳踏車也停這裡）＋ 汽車停止線
+        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(108, I.y + 199, 284, 38);
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.font = font(15, "bold");
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("機 車 停 等 區", 250, I.y + 219);
         ctx.fillStyle = "#fff";
-        ctx.fillRect(100, I.y + 196, 300, 5);
+        ctx.fillRect(106, I.y + 241, 288, 6);
+
+        // 路面上的「慢」字（要轉彎的那條車道畫箭頭，不畫慢字）
+        ctx.fillStyle = "rgba(255,255,255,0.72)";
+        ctx.font = font(40, "900");
+        for (let lane = 0; lane < 3; lane++) {
+          if (I.isRoute && !I.handled && lane === (I.crossDir === 1 ? 2 : 0)) continue;
+          ctx.fillText("慢", lanes[lane], I.y + 330);
+        }
       }
 
       // 橫向馬路的車道線
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
       ctx.lineWidth = 4;
       ctx.setLineDash([30, 20]);
       ctx.lineDashOffset = 0;
@@ -1177,22 +2063,67 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // 路名牌（綠底）和單行道標誌（藍底）
+      // 路名牌（綠底）和單行道標誌（藍底），立在轉角
       if (!I.passed) {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
+        rr(444, I.y + 155, 52, 16, 3);
         ctx.fillStyle = "#2e7d32";
-        ctx.fillRect(442, I.y + 200, 56, 20);
+        ctx.fill();
         ctx.fillStyle = "#fff";
-        ctx.font = "bold 12px sans-serif";
-        ctx.fillText(I.name, 470, I.y + 210);
-
+        ctx.font = font(10.5, "bold");
+        ctx.fillText(I.name, 470, I.y + 163.5);
+        rr(444, I.y + 173, 52, 15, 3);
         ctx.fillStyle = "#1565c0";
-        ctx.fillRect(442, I.y + 222, 56, 18);
+        ctx.fill();
         ctx.fillStyle = "#fff";
-        ctx.font = "bold 11px sans-serif";
-        ctx.fillText(I.crossDir === 1 ? "單行 →" : "← 單行", 470, I.y + 231);
+        ctx.font = font(10, "bold");
+        ctx.fillText(I.crossDir === 1 ? "單行 →" : "← 單行", 470, I.y + 181);
       }
+    }
+
+    // 台灣的紅綠燈是橫的（紅、黃、綠），旁邊還有倒數秒數
+    function drawSignalHead(cx, cy, I, scale) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "#151515";
+      rr(-25, -9, 50, 18, 4); ctx.fill();
+      const lamps = [["red", -15, "#ff1744", "#3a1212"], ["yellow", 0, "#ffd600", "#3a3512"], ["green", 15, "#00e676", "#123a1f"]];
+      for (const [name, dx, on, off] of lamps) {
+        const lit = I.light === name;
+        ctx.fillStyle = lit ? on : off;
+        if (lit) {
+          ctx.shadowColor = on;
+          ctx.shadowBlur = 18;
+        }
+        circle(dx, 0, 5.5);
+        ctx.shadowBlur = 0;
+      }
+      // 倒數秒數
+      ctx.fillStyle = "#0b0b0b";
+      rr(27, -9, 22, 18, 3); ctx.fill();
+      ctx.fillStyle = I.light === "green" ? "#00e676" : (I.light === "yellow" ? "#ffd600" : "#ff1744");
+      ctx.font = font(12, "bold");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(Math.min(99, Math.ceil(I.lightTimer / 60))), 38, 1);
+      ctx.restore();
+    }
+
+    // 燈桿立在路口「對面」的轉角，伸到馬路上空，面對等紅燈的你（畫在最上層）
+    function drawTrafficLights(I) {
+      const y = I.y - 170;
+      ctx.strokeStyle = "#5f6368";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      line(436, y, 300, y);
+      line(64, y, 150, y);
+      ctx.fillStyle = "#3c4043";
+      circle(436, y, 6);
+      circle(64, y, 6);
+      drawSignalHead(300, y, I, 1);
+      drawSignalHead(150, y, I, 0.85);
     }
 
     // ===== 轉彎提示 =====
@@ -1206,20 +2137,12 @@
     // 路面上的轉彎指引：要轉的車道塗黃色，畫上轉彎箭頭（跟真實的路面指向線一樣）
     function drawRouteGuide(I) {
       if (!I.isRoute || I.handled) return;
-      const lane = I.crossDir === 1 ? 2 : 0;
-      const x = lanes[lane];
-
-      // 停止線之前的一段車道塗成黃色
-      ctx.fillStyle = "rgba(255, 215, 64, 0.22)";
-      ctx.fillRect(x - 48, I.y + 202, 96, 560);
-
-      // 路面上的大箭頭（每隔 150 畫一個）
-      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.font = "bold 64px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      for (let y = I.y + 280; y < I.y + 760; y += 150) {
-        ctx.fillText(I.crossDir === 1 ? "↱" : "↰", x, y);
+      const x = lanes[I.crossDir === 1 ? 2 : 0];
+      const pulse = 0.2 + Math.sin(frameCount * 0.1) * 0.07;
+      ctx.fillStyle = "rgba(255,213,79," + pulse + ")";
+      ctx.fillRect(x - 46, I.y + 250, 92, 520);
+      for (let y = I.y + 310; y < I.y + 770; y += 150) {
+        drawTurnArrow(x, y, I.crossDir, "rgba(255,255,255,0.9)", 1);
       }
     }
 
@@ -1233,14 +2156,12 @@
 
       const I = intersection;
       const routeI = I && I.isRoute && !I.handled ? I : null;
-      // 剛錯過路口（舊路口還在畫面上）→ 先不顯示
-      if (I && I.isRoute && I.handled) return;
+      if (I && I.isRoute && I.handled) return;   // 剛錯過路口 → 先不顯示
 
       const dirText = seg.turn === 1 ? "右轉" : "左轉";
-      const arrow = seg.turn === 1 ? "↱" : "↰";
       const nextStreet = dest.route[segIndex + 1].street;
       const targetLane = seg.turn === 1 ? 2 : 0;
-      const blink = Math.floor(elapsedFrames / 15) % 2 === 0;   // 閃爍用
+      const blink = Math.floor(frameCount / 15) % 2 === 0;
 
       // 這一刻該做什麼
       let hint, hintColor;
@@ -1258,31 +2179,29 @@
         hintColor = "#fff";
       }
 
-      // 橫幅
-      ctx.fillStyle = "rgba(13, 71, 161, 0.88)";
-      ctx.fillRect(110, 160, 280, 64);
+      const g = ctx.createLinearGradient(0, 160, 0, 224);
+      g.addColorStop(0, "rgba(21,101,192,0.95)");
+      g.addColorStop(1, "rgba(13,71,161,0.95)");
+      rr(100, 160, 300, 64, 14);
+      ctx.fillStyle = g;
+      ctx.fill();
       ctx.strokeStyle = "#ffd740";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(110, 160, 280, 64);
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
 
-      // 左邊的大箭頭
-      ctx.fillStyle = "#ffd740";
-      ctx.font = "bold 48px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(arrow, 145, 193);
+      drawTurnArrow(140, 196, seg.turn, "#ffd740", 0.95);
 
-      // 右邊的文字
       ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 20px sans-serif";
+      ctx.font = font(20, "bold");
       ctx.fillText("前方" + dirText + " " + nextStreet, 178, 180);
       ctx.fillStyle = hintColor;
-      ctx.font = "bold 15px sans-serif";
+      ctx.font = font(15, "bold");
       ctx.fillText(hint, 178, 207);
     }
 
-    // 校門：最後一段路快騎完時出現，騎到就抵達
+    // ===== 校門：最後一段路快騎完時出現，騎到就抵達 =====
     function updateGate() {
       const seg = currentSeg();
       if (!seg.turn && !gate && segDistance >= seg.length - 620) {
@@ -1290,55 +2209,48 @@
       }
       if (gate) {
         gate.y = gate.y + speed;
-        if (gate.y >= player.y - 30) {
+        if (gate.y >= player.y - 30 && !gameOver) {
           won = true;
-          gameOver = true;
-          gameOverReason = "win";
+          endGame("win");
         }
       }
     }
 
-    // 畫校門
     function drawGate() {
       if (!gate) return;
-      // 門柱
-      ctx.fillStyle = "#8d6e63";
-      ctx.fillRect(82, gate.y - 34, 18, 50);
-      ctx.fillRect(400, gate.y - 34, 18, 50);
-      // 橫幅
-      ctx.fillStyle = "#b71c1c";
-      ctx.fillRect(90, gate.y - 40, 320, 30);
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 17px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("國立成功大學　" + dest.campus, 250, gate.y - 25);
-    }
-
-    // 畫紅綠燈（路口兩側各一支）
-    function drawTrafficLights(I) {
-      const colors = {
-        red: I.light === "red" ? "#ff1744" : "#4a1a1a",
-        yellow: I.light === "yellow" ? "#ffd600" : "#4a431a",
-        green: I.light === "green" ? "#00e676" : "#1a4a2a"
-      };
-      for (const x of [80, 420]) {
-        const top = I.y + 205;
-        ctx.fillStyle = "#333";
-        ctx.fillRect(x - 2, top + 48, 4, 20);    // 燈桿
-        ctx.fillStyle = "#111";
-        ctx.fillRect(x - 11, top, 22, 50);       // 燈箱
-        const lamps = [["red", 9], ["yellow", 25], ["green", 41]];
-        for (const [name, offset] of lamps) {
-          ctx.fillStyle = colors[name];
-          ctx.beginPath();
-          ctx.arc(x, top + offset, 6, 0, Math.PI * 2);
-          ctx.fill();
+      const y = gate.y;
+      // 終點格子線
+      for (let i = 0; i < 29; i++) {
+        for (let r = 0; r < 2; r++) {
+          ctx.fillStyle = (i + r) % 2 ? "#fafafa" : "#111";
+          ctx.fillRect(105 + i * 10, y + 10 + r * 10, 10, 10);
         }
       }
+      // 門柱（紅磚）
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
+      rr(80, y - 22, 26, 42, 4); ctx.fill();
+      rr(402, y - 22, 26, 42, 4); ctx.fill();
+      ctx.fillStyle = "#8d3b2a";
+      rr(76, y - 26, 26, 42, 4); ctx.fill();
+      rr(398, y - 26, 26, 42, 4); ctx.fill();
+      ctx.fillStyle = "#b5523c";
+      rr(79, y - 23, 20, 8, 2); ctx.fill();
+      rr(401, y - 23, 20, 8, 2); ctx.fill();
+      // 門楣
+      rr(84, y - 50, 332, 32, 8);
+      ctx.fillStyle = "#7b1f1f";
+      ctx.fill();
+      ctx.strokeStyle = "#ffd54f";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "#ffe082";
+      ctx.font = font(16, "900");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("國立成功大學　" + dest.campus, 250, y - 33);
     }
 
-    // ===== 第 6 步：碰撞判定＋扣命 =====
+    // ===== 第 6 步：碰撞判定、扣命、計分 =====
 
     let lives = 3;            // 剩幾條命
     let invincibleTimer = 0;  // 無敵時間（幀數），撞到後一段時間不會再扣命
@@ -1346,24 +2258,40 @@
     let message = "";         // 畫面中間要顯示的訊息
     let messageTimer = 0;     // 訊息還要顯示幾幀
     let gameOver = false;     // 遊戲是否結束
-    let gameOverReason = "";  // 怎麼死的（顯示在結束畫面）
+    let gameOverReason = "";  // 怎麼結束的：win / normal / redlight
+    let lastHitMsg = "";      // 最後一次被什麼撞（結束畫面用）
+    let resultFrame = 0;      // 結束畫面播了幾幀（做動畫用）
+    let result = null;        // 結算資料
 
-    // 判斷腳踏車有沒有撞到某個障礙物
+    // 這一局的表現
+    const stats = { distance: 0, nearMiss: 0, perfectStop: 0, bell: 0 };
+
+    // 騎車中即時顯示的分數
+    function liveScore() {
+      return Math.floor(stats.distance / 10) + stats.nearMiss * 50 + stats.perfectStop * 100 + stats.bell * 30;
+    }
+
+    // 每種障礙物的碰撞範圍（中心到邊緣的距離）
+    function hitBox(o) {
+      if (o.type === "pothole") return { w: 16, h: 12 };   // 很小，要壓到才算
+      if (o.type === "parked") return { w: 18, h: 28 };
+      if (o.type === "crosser") return { w: o.hitW, h: o.hitH };
+      return { w: 26, h: 46 };                               // 直向的機車：窄窄長長的
+    }
     function isHit(o) {
-      const dx = Math.abs(player.x - o.x);  // 左右距離
-      const dy = Math.abs(player.y - o.y);  // 上下距離
-      // 左右和上下都夠近 → 兩個東西重疊 → 撞到了
-      if (o.type === "pothole") {
-        return dx < 16 && dy < 12;          // 人行道小坑洞：很小，要壓到才算
-      } else if (o.type === "crosser") {
-        return dx < o.hitW && dy < o.hitH;  // 橫向的車：每台大小不同
-      } else {
-        return dx < 34 && dy < 40;          // 直向機車：窄窄長長的
-      }
+      const b = hitBox(o);
+      return Math.abs(player.x - o.x) < b.w && Math.abs(player.y - o.y) < b.h;
+    }
+    // 「差一點就撞到」的範圍
+    function isClose(o) {
+      const b = hitBox(o);
+      return Math.abs(player.x - o.x) < b.w + 24 && Math.abs(player.y - o.y) < b.h + 16;
     }
 
     // 每一幀檢查所有障礙物
     function checkCollisions() {
+      if (gameOver) return;
+
       // 闖紅燈的懲罰車：無敵時間也躲不掉
       for (const o of obstacles) {
         if (o.fatal && isHit(o)) {
@@ -1376,9 +2304,12 @@
         invincibleTimer = invincibleTimer - 1;  // 無敵中：只倒數，不檢查
         return;
       }
+
       for (const o of obstacles) {
-        // 你騎很慢 → 機車會看到你、繞過你，不會撞到（坑洞還是會摔）
-        if (o.type !== "pothole" && speed < SAFE_SPEED) {
+        const isVehicle = o.type !== "pothole" && o.type !== "parked";
+
+        // 你騎很慢 → 機車會看到你、繞過你，不會撞到（坑洞、違停還是會撞）
+        if (isVehicle && speed < SAFE_SPEED) {
           if (isHit(o) && !o.avoided) {
             o.avoided = true;
             message = "😮 機車繞過你了（騎慢比較安全）";
@@ -1386,33 +2317,51 @@
           }
           continue;
         }
+
         if (isHit(o)) {
           onHit(o);
           break;  // 一次只算撞到一個
+        }
+
+        // 驚險閃過：曾經靠得很近、又沒撞到 → 加分
+        if (isVehicle) {
+          if (isClose(o)) {
+            o.wasClose = true;
+          } else if (o.wasClose && !o.nearMissed && !o.hitPlayer) {
+            o.nearMissed = true;
+            stats.nearMiss++;
+            addPopup("好險！+50", player.x, player.y - 46, "#ffd740");
+            Sound.whoosh();
+          }
         }
       }
     }
 
     // 撞到之後會發生的事（o = 撞到的那個障礙物）
     function onHit(o) {
-      shakeTimer = 15;         // 震動 0.25 秒
+      o.hitPlayer = true;
+      shakeTimer = 15;
+      hitFlash = 18;
 
       // 闖紅燈被撞：直接死亡
       if (o.fatal) {
         lives = 0;
-        gameOver = true;
-        gameOverReason = "redlight";
+        burst(player.x, player.y, ["#ffd54f", "#ff7043", "#ffffff", "#90a4ae"], 30, 5);
+        Sound.crash();
+        endGame("redlight");
         return;
       }
 
       lives = lives - 1;
       speed = speed * 0.4;     // 撞到東西，車速驟降
       invincibleTimer = 90;    // 1.5 秒無敵
-      messageTimer = 60;
+      messageTimer = 70;
 
       // 依照撞到的東西，顯示不同訊息
       if (o.type === "pothole") {
         message = o.variant === "hole" ? "💥 人行道坑洞，摔車了！" : "💥 地磚翹起來，摔車了！";
+      } else if (o.type === "parked") {
+        message = "💥 撞到違停在人行道的機車！";
       } else if (o.type === "wrongway") {
         message = "🛵 被逆向機車撞了！";
       } else if (o.type === "crosser") {
@@ -1424,161 +2373,734 @@
       } else {
         message = "🛵 被亂切機車撞了！";
       }
+      lastHitMsg = message;
+
+      if (o.type === "pothole") {
+        burst(player.x, player.y - 10, ["#8a4a37", "#c4785d", "#d7ccc8"], 14, 3);
+        Sound.thud();
+      } else {
+        burst(player.x, player.y - 10, ["#ffd54f", "#ff7043", "#ffffff", "#90a4ae", o.color || "#ffffff"], 22, 4.5);
+        Sound.crash();
+      }
 
       if (lives <= 0) {
-        gameOver = true;
-        gameOverReason = "normal";
+        endGame("normal");
       }
     }
 
+    // ===== 按鈴：叮叮！讓想切進來、逆向的機車讓開 =====
+    let bellCooldown = 0;
+
+    function ringBell() {
+      if (bellCooldown > 0) return;
+      bellCooldown = 40;
+      Sound.bell();
+      addPopup("叮叮！", player.x + 34, player.y - 30, "#fff59d");
+
+      for (const o of obstacles) {
+        if (o.warned) continue;
+        const ahead = player.y - o.y;   // 正數 = 在你前面
+        if (o.type === "swerver" && (o.phase === "overtake" || o.phase === "cutin") && Math.abs(ahead) < 240) {
+          o.warned = true;
+          if (Math.random() < 0.75) {   // 大部分騎士聽到會讓（不是每個都會）
+            if (o.phase === "cutin") o.lane = o.fromLane;
+            o.phase = "leave";
+            o.targetSpeed = 8;
+            stats.bell++;
+            addPopup("🔔 對方讓開了 +30", o.x, o.y - 40, "#69f0ae");
+          }
+        } else if (o.type === "wrongway" && ahead > 0 && ahead < 320 && Math.abs(o.x - player.x) < 60) {
+          o.warned = true;
+          if (Math.random() < 0.75) {
+            const choices = [o.lane - 1, o.lane + 1].filter(l => l >= 0 && l <= 2 && Math.abs(laneX(l) - player.x) >= 60);
+            if (choices.length > 0) {
+              o.lane = pick(choices);
+              stats.bell++;
+              addPopup("🔔 對方閃開了 +30", o.x, o.y + 40, "#69f0ae");
+            }
+          }
+        }
+      }
+    }
+
+    // ===== 結束：抵達、命用完、闖紅燈 =====
+
+    // 最佳紀錄（每個目的地各存一筆）
+    function loadRecords() {
+      try {
+        return JSON.parse(storeGet("tainanBikeRecords") || "{}");
+      } catch (e) {
+        return {};
+      }
+    }
+    function saveRecord(index, score, stars) {
+      const records = loadRecords();
+      const old = records[index];
+      let isNew = false;
+      if (!old || score > old.score) {
+        records[index] = { score: score, stars: Math.max(stars, old ? old.stars : 0) };
+        isNew = true;
+      } else if (stars > old.stars) {
+        records[index].stars = stars;
+      }
+      storeSet("tainanBikeRecords", JSON.stringify(records));
+      return isNew;
+    }
+
+    function endGame(reason) {
+      gameOver = true;
+      gameOverReason = reason;
+      resultFrame = 0;
+      Music.stop();
+      for (const k in keys) keys[k] = false;
+
+      const meters = Math.floor(stats.distance / 10);
+      if (reason === "win") {
+        const usedSec = elapsedFrames / 60;
+        const limit = timeLimit(dest);
+        const late = usedSec > limit;
+        const timeLeft = late ? 0 : Math.floor(limit - usedSec);
+        const rows = [
+          ["🚲 騎乘距離", meters + " m", meters],
+          ["😮 好險閃避", "× " + stats.nearMiss, stats.nearMiss * 50],
+          ["🚦 紅燈完美停車", "× " + stats.perfectStop, stats.perfectStop * 100],
+          ["🔔 按鈴示警", "× " + stats.bell, stats.bell * 30],
+          ["⏰ 剩餘時間", late ? "遲到" : timeLeft + " 秒", timeLeft * 10],
+          ["❤️ 剩餘生命", "× " + lives, lives * 200]
+        ];
+        const total = rows.reduce((sum, r) => sum + r[2], 0);
+        const stars = Math.max(1, lives - (late ? 1 : 0));   // 剩幾條命就幾顆星，遲到扣一顆
+        const isNew = saveRecord(DESTINATIONS.indexOf(dest), total, stars);
+        result = { rows: rows, total: total, stars: stars, late: late, usedSec: usedSec, limit: limit, isNew: isNew };
+        Sound.fanfare();
+        spawnConfetti();
+      } else {
+        const left = Math.round((1 - routeProgress()) * totalLength(dest) / 10);
+        result = { meters: meters, left: left, score: liveScore(), tip: pick(TIPS) };
+        if (reason === "redlight") Sound.siren();
+        else Sound.fail();
+      }
+    }
+
+    const TIPS = [
+      "看到機車「切進來」就煞車，或按 🔔 讓它讓開",
+      "畫面底部出現「後方來車」時，先別換車道",
+      "時速低於 8 km/h 時機車會繞過你（🛡️）",
+      "紅燈停在停止線前 60 公分內，有「完美停車」加分",
+      "人行道上的坑洞很小，樹蔭下更要小心",
+      "聽到「吱——」的煞車聲，代表前面有人急煞"
+    ];
+
     // 倒數各種計時器
     function updateEffects() {
-      if (shakeTimer > 0) shakeTimer = shakeTimer - 1;
-      if (messageTimer > 0) messageTimer = messageTimer - 1;
+      if (shakeTimer > 0) shakeTimer--;
+      if (messageTimer > 0) messageTimer--;
+      if (bellCooldown > 0) bellCooldown--;
     }
 
-    // 畫面中間的訊息
-    function drawMessage() {
-      if (messageTimer <= 0) return;
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(60, 250, 380, 50);
+    // ===== 畫面上方的資訊（HUD）=====
+
+    // 按鈕的位置（畫按鈕和判斷有沒有點到都用這些數字）
+    const HOME_BUTTON = { x: 8, y: 8, w: 46, h: 28 };
+    const SOUND_BUTTON = { x: 8, y: 40, w: 46, h: 28 };
+    const MENU_HELP_BUTTON = { x: 8, y: 8, w: 72, h: 28 };
+    const MENU_SOUND_BUTTON = { x: 446, y: 8, w: 46, h: 28 };
+    const PAUSE_MENU_BUTTON = { x: 70, y: 330, w: 170, h: 60 };
+    const PAUSE_RESUME_BUTTON = { x: 260, y: 330, w: 170, h: 60 };
+
+    // 點擊位置 (x, y) 有沒有在按鈕範圍內（多給 4 點容錯，手指比較好按）
+    function inButton(b, x, y) {
+      return x >= b.x - 4 && x <= b.x + b.w + 4 && y >= b.y - 4 && y <= b.y + b.h + 4;
+    }
+
+    // 半透明的深色面板
+    function panel(x, y, w, h) {
+      rr(x, y, w, h, 10);
+      ctx.fillStyle = "rgba(14,20,28,0.78)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    function drawButton(b, text, color, fontSize) {
+      rr(b.x, b.y, b.w, b.h, 10);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 20px sans-serif";
+      ctx.font = font(fontSize, "bold");
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(message, 250, 275);
+      ctx.fillText(text, b.x + b.w / 2, b.y + b.h / 2 + 1);
     }
 
-    // 遊戲結束畫面
+    function drawIconButton(b, icon) {
+      rr(b.x, b.y, b.w, b.h, 8);
+      ctx.fillStyle = "rgba(14,20,28,0.78)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.font = font(15);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.fillText(icon, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    }
+
+    function drawHomeButton() {
+      drawIconButton(HOME_BUTTON, "🏠");
+    }
+    function soundIcon() {
+      return Sound.muted ? "🔇" : "🔊";
+    }
+
+    function drawHeart(x, y, s, filled) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s / 8, s / 8);
+      ctx.fillStyle = filled ? "#ff5252" : "rgba(255,255,255,0.16)";
+      ctx.beginPath();
+      ctx.moveTo(0, 6);
+      ctx.bezierCurveTo(-9, 0, -6, -8, 0, -3);
+      ctx.bezierCurveTo(6, -8, 9, 0, 0, 6);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawHUD() {
+      // 左上：選單、音效按鈕
+      drawHomeButton();
+      drawIconButton(SOUND_BUTTON, soundIcon());
+
+      // 時速表（圓弧儀表）
+      panel(60, 8, 80, 62);
+      const kmh = Math.round(speed * 4);   // 換算成看起來合理的時速
+      const cx = 100, cy = 38, r = 21;
+      const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+      ctx.lineCap = "round";
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = "rgba(255,255,255,0.15)";
+      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+      const gaugeColor = speed < SAFE_SPEED ? "#64b5f6" : (speed > 7 ? "#ff5252" : "#69f0ae");
+      ctx.strokeStyle = gaugeColor;
+      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + (a1 - a0) * (speed / MAX_SPEED) + 0.001); ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.font = font(17, "900");
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(kmh), cx, cy);
+      ctx.fillStyle = "#b0bec5";
+      ctx.font = font(9, "bold");
+      ctx.fillText("km/h", cx, 61);
+      if (speed < SAFE_SPEED) {
+        ctx.font = font(11);
+        ctx.fillText("🛡️", 129, 19);
+      }
+
+      // 中間：路名、分數、導航、路線進度
+      panel(146, 8, 206, 62);
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#fff";
+      ctx.font = font(14, "bold");
+      ctx.fillText("📍 " + currentStreet, 155, 23);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#ffd740";
+      ctx.font = font(13, "bold");
+      ctx.fillText("⭐ " + liveScore().toLocaleString(), 344, 23);
+
+      const seg = currentSeg();
+      const metersLeft = Math.max(0, Math.round((seg.length - segDistance) / 10));
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#80d8ff";
+      ctx.font = font(12, "bold");
+      if (seg.turn) {
+        ctx.fillText("🧭 " + metersLeft + "m 後" + (seg.turn === 1 ? "右轉 " : "左轉 ") + dest.route[segIndex + 1].street, 155, 42);
+      } else {
+        ctx.fillText("🎯 " + dest.campus + " 剩 " + metersLeft + "m", 155, 42);
+      }
+      drawProgressBar(156, 56, 188);
+
+      // 易肇事路段警告
+      if (seg.warning) {
+        rr(146, 74, 206, 18, 9);
+        ctx.fillStyle = Math.floor(frameCount / 20) % 2 ? "rgba(230,81,0,0.9)" : "rgba(191,54,12,0.9)";
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.font = font(11, "bold");
+        ctx.textAlign = "center";
+        ctx.fillText("⚠ 你正騎在「" + seg.warning + "」", 249, 83.5);
+      }
+
+      // 右上：命、上課倒數
+      panel(358, 8, 134, 62);
+      for (let i = 0; i < 3; i++) drawHeart(380 + i * 22, 24, 9, i < lives);
+      const remain = timeLimit(dest) - elapsedFrames / 60;
+      ctx.textAlign = "right";
+      ctx.font = font(18, "900");
+      if (remain >= 0) {
+        ctx.fillStyle = remain < 15 && Math.floor(frameCount / 15) % 2 ? "#ff5252" : (remain < 15 ? "#ffd740" : "#fff");
+        ctx.fillText("⏰ " + formatTime(remain), 484, 51);
+      } else {
+        ctx.fillStyle = "#ff5252";
+        ctx.fillText("遲到 " + formatTime(-remain), 484, 51);
+      }
+
+      // 前方路口的燈號和轉彎提示
+      const I = intersection;
+      if (I && !I.passed && !I.passedStopLine) {
+        const lightText = { red: "紅燈", yellow: "黃燈", green: "綠燈" };
+        const lightColor = { red: "#ff1744", yellow: "#ffd600", green: "#00e676" };
+        const h = I.hotspot ? 70 : 52;
+        panel(358, 74, 134, h);
+        ctx.save();
+        ctx.shadowColor = lightColor[I.light];
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = lightColor[I.light];
+        circle(374, 90, 7);
+        ctx.restore();
+        ctx.textAlign = "left";
+        ctx.fillStyle = lightColor[I.light];
+        ctx.font = font(14, "bold");
+        ctx.fillText(lightText[I.light] + " " + Math.ceil(I.lightTimer / 60) + " 秒", 388, 90);
+        ctx.fillStyle = "#fff";
+        ctx.font = font(11.5);
+        if (!I.isRoute) ctx.fillText("🧭 這個路口直走", 366, 112);
+        else if (I.crossDir === 1) ctx.fillText("最右車道按 → 右轉", 366, 112);
+        else ctx.fillText("最左車道按 ← 左轉", 366, 112);
+        if (I.hotspot) {
+          ctx.fillStyle = "#ff8a80";
+          ctx.font = font(11.5, "bold");
+          ctx.fillText("⚠️ 事故熱點路口", 366, 132);
+        }
+      }
+    }
+
+    // 路線進度條：轉彎點、事故熱點、終點旗子
+    function drawProgressBar(x, y, w) {
+      const total = totalLength(dest);
+      rr(x, y - 2.5, w, 5, 2.5);
+      ctx.fillStyle = "rgba(255,255,255,0.15)";
+      ctx.fill();
+      const p = routeProgress();
+      if (p > 0) {
+        rr(x, y - 2.5, Math.max(5, w * p), 5, 2.5);
+        ctx.fillStyle = "#69f0ae";
+        ctx.fill();
+      }
+      let acc = 0;
+      for (let i = 0; i < dest.route.length - 1; i++) {
+        acc += dest.route[i].length;
+        const mx = x + w * acc / total;
+        ctx.fillStyle = dest.route[i].hotspot ? "#ff5252" : "#40c4ff";
+        circle(mx, y, 3.5);
+      }
+      ctx.fillStyle = "#fff";
+      circle(x + w * p, y, 3.5);
+      ctx.font = font(10);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🏁", x + w + 2, y - 3);
+    }
+
+    // 畫面中間的訊息（圓角膠囊）
+    function drawMessage() {
+      if (messageTimer <= 0) return;
+      ctx.font = font(18, "bold");
+      const w = Math.min(470, ctx.measureText(message).width + 40);
+      const alpha = Math.min(1, messageTimer / 15);
+      ctx.globalAlpha = alpha;
+      rr(250 - w / 2, 244, w, 44, 22);
+      ctx.fillStyle = "rgba(10,14,20,0.82)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.2)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(message, 250, 267);
+      ctx.globalAlpha = 1;
+    }
+
+    // 速度線：騎很快時畫面兩側出現風切線
+    function drawSpeedLines() {
+      if (speed < 6.5 || turning) return;
+      const strength = (speed - 6.5) / 3.5;
+      ctx.strokeStyle = "rgba(255,255,255," + (0.08 + strength * 0.25) + ")";
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 14; i++) {
+        const x = i < 7 ? 6 + ((i * 37) % 90) : 404 + ((i * 41) % 90);
+        const y = ((i * 97 + frameCount * speed * 3) % 760) - 80;
+        line(x, y, x, y + 30 + speed * 5);
+      }
+    }
+
+    // 暈影、晨光、受傷時的紅光
+    function drawScreenFx() {
+      const sun = ctx.createLinearGradient(500, 0, 200, 300);
+      sun.addColorStop(0, "rgba(255,196,120,0.12)");
+      sun.addColorStop(1, "rgba(255,196,120,0)");
+      ctx.fillStyle = sun;
+      ctx.fillRect(0, 0, W, H);
+
+      const v = ctx.createRadialGradient(250, 330, 230, 250, 330, 480);
+      v.addColorStop(0, "rgba(0,0,0,0)");
+      v.addColorStop(1, "rgba(0,0,0,0.38)");
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, W, H);
+
+      if (hitFlash > 0) {
+        ctx.fillStyle = "rgba(255,30,30," + (hitFlash / 18 * 0.35) + ")";
+        ctx.fillRect(0, 0, W, H);
+      }
+    }
+
+    // ===== 畫出整個遊戲畫面 =====
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // 遊戲世界（撞到時會震動，轉彎時會旋轉）
+      ctx.save();
+      if (shakeTimer > 0) {
+        ctx.translate(randomBetween(-6, 6), randomBetween(-6, 6));
+      }
+      if (turning) {
+        // 攝影機：以腳踏車為中心，把世界反方向轉 → 腳踏車看起來一直朝上
+        ctx.translate(turning.anchorX, 520);
+        ctx.rotate(-turning.dir * turning.phi);
+        ctx.translate(-player.x, -player.y);
+      }
+      drawRoad();
+      if (intersection) {
+        drawIntersection(intersection);
+        drawRouteGuide(intersection);
+      }
+      drawSceneryGround();
+      drawSkids();
+      drawGroundObstacles();
+      drawGate();
+      drawVehicles();
+      drawPlayer();
+      drawParticles();
+      drawSceneryOverhead();
+      if (intersection && !intersection.passed) {
+        drawTrafficLights(intersection);
+      }
+      drawTags();
+      drawPopups();
+      drawRearWarnings();
+      ctx.restore();
+
+      // 介面（不跟著震動和旋轉）
+      drawSpeedLines();
+      drawScreenFx();
+      if (!gameOver) {
+        drawHUD();
+        drawTurnBanner();
+        if (!paused) drawMessage();
+      } else {
+        drawGameOver();
+      }
+    }
+
+    // ===== 結束畫面 =====
     function drawGameOver() {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-      ctx.fillRect(0, 0, 500, 600);
+      const f = resultFrame;
+      ctx.fillStyle = "rgba(5,8,12," + Math.min(0.72, f / 20) + ")";
+      ctx.fillRect(0, 0, W, H);
+
+      // 中間的卡片（從下面滑上來）
+      const slide = Math.max(0, 40 - f * 3);
+      ctx.save();
+      ctx.translate(0, slide);
+      const g = ctx.createLinearGradient(0, 64, 0, 534);
+      g.addColorStop(0, "rgba(24,34,46,0.97)");
+      g.addColorStop(1, "rgba(12,18,26,0.97)");
+      rr(40, 64, 420, 470, 20);
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.15)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
       if (gameOverReason === "win") {
-        // 抵達目的地
-        const usedSec = elapsedFrames / 60;
-        const limit = timeLimit(dest);
-        const late = usedSec > limit;
-        // 評分：剩幾條命就幾顆星，遲到扣一顆，最少一顆
-        const stars = Math.max(1, lives - (late ? 1 : 0));
-
-        ctx.font = "64px sans-serif";
-        ctx.fillText("🎓", 250, 150);
-        ctx.fillStyle = "#69f0ae";
-        ctx.font = "bold 34px sans-serif";
-        ctx.fillText("抵達" + dest.campus + "！", 250, 225);
-        ctx.fillStyle = "#fff";
-        ctx.font = "20px sans-serif";
-        ctx.fillText(dest.building, 250, 262);
-
-        ctx.font = "bold 22px sans-serif";
-        if (late) {
-          ctx.fillStyle = "#ffd740";
-          ctx.fillText("⏰ 遲到 " + formatTime(usedSec - limit), 250, 315);
-        } else {
-          ctx.fillStyle = "#69f0ae";
-          ctx.fillText("✅ 準時上課！", 250, 315);
-        }
-        ctx.fillStyle = "#ccc";
-        ctx.font = "16px sans-serif";
-        ctx.fillText("花了 " + formatTime(usedSec) + "（時限 " + formatTime(limit) + "）", 250, 350);
-
-        ctx.fillStyle = "#ffd740";
-        ctx.font = "32px sans-serif";
-        ctx.fillText("★".repeat(stars) + "☆".repeat(3 - stars), 250, 395);
+        drawWinCard(f);
       } else if (gameOverReason === "redlight") {
-        // 闖紅燈被撞 → 送成大醫院
-        ctx.font = "64px sans-serif";
-        ctx.fillText("🚑", 250, 180);
-        ctx.fillStyle = "#ff5252";
-        ctx.font = "bold 40px sans-serif";
-        ctx.fillText("闖紅燈被撞了", 250, 260);
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 22px sans-serif";
-        ctx.fillText("🏥 已送往成大醫院", 250, 315);
-        ctx.font = "16px sans-serif";
-        ctx.fillStyle = "#ccc";
-        ctx.fillText("紅燈要停，生命只有一條", 250, 355);
+        drawRedLightCard(f);
       } else {
-        ctx.fillStyle = "#ff5252";
-        ctx.font = "bold 44px sans-serif";
-        ctx.fillText("GAME OVER", 250, 260);
-        ctx.fillStyle = "#fff";
-        ctx.font = "18px sans-serif";
-        ctx.fillText("台南的路太可怕了…", 250, 310);
+        drawFailCard(f);
       }
+      ctx.restore();
 
-      ctx.fillStyle = "#fff";
-      ctx.font = "18px sans-serif";
-      ctx.fillText(isTouch() ? "點一下畫面 回到選單" : "按 空白鍵 回到選單", 250, 450);
+      drawConfetti();
+
+      // 下方提示（播一下才讓你跳過，免得不小心按掉）
+      if (f > 30) {
+        ctx.globalAlpha = 0.6 + Math.sin(frameCount * 0.1) * 0.4;
+        ctx.fillStyle = "#fff";
+        ctx.font = font(16, "bold");
+        ctx.textAlign = "center";
+        ctx.fillText(isTouch() ? "點一下畫面 回到選單" : "按 空白鍵 回到選單", 250, 566);
+        ctx.globalAlpha = 1;
+      }
     }
 
-    // 選目的地的畫面
+    function drawWinCard(f) {
+      const R = result;
+      ctx.font = font(48);
+      ctx.fillText("🎓", 250, 112);
+      ctx.fillStyle = "#69f0ae";
+      ctx.font = font(28, "900");
+      ctx.fillText("抵達" + dest.campus + "！", 250, 162);
+      ctx.fillStyle = "#b0bec5";
+      ctx.font = font(15);
+      ctx.fillText(dest.building + "　花了 " + formatTime(R.usedSec) + "（時限 " + formatTime(R.limit) + "）", 250, 192);
+      ctx.font = font(18, "bold");
+      if (R.late) {
+        ctx.fillStyle = "#ffd740";
+        ctx.fillText("⏰ 遲到 " + formatTime(R.usedSec - R.limit) + "　下次早點出門！", 250, 224);
+      } else {
+        ctx.fillStyle = "#69f0ae";
+        ctx.fillText("✅ 準時上課！", 250, 224);
+      }
+
+      // 分數明細：一行一行出現
+      for (let i = 0; i < R.rows.length; i++) {
+        if (f < 20 + i * 10) break;
+        const y = 262 + i * 26;
+        const [label, detail, pts] = R.rows[i];
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#eceff1";
+        ctx.font = font(14);
+        ctx.fillText(label, 76, y);
+        ctx.fillStyle = "#90a4ae";
+        ctx.fillText(detail, 230, y);
+        ctx.textAlign = "right";
+        ctx.fillStyle = pts > 0 ? "#ffd740" : "#607d8b";
+        ctx.font = font(14, "bold");
+        ctx.fillText("+" + pts.toLocaleString(), 424, y);
+      }
+
+      // 總分（數字往上跳）
+      if (f >= 82) {
+        ctx.strokeStyle = "rgba(255,255,255,0.15)";
+        ctx.lineWidth = 1;
+        line(76, 418, 424, 418);
+        const shown = Math.round(R.total * clamp((f - 82) / 40, 0, 1));
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#fff";
+        ctx.font = font(16, "bold");
+        ctx.fillText("總分", 76, 444);
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#ffd740";
+        ctx.font = font(30, "900");
+        ctx.fillText(shown.toLocaleString(), 424, 444);
+      }
+
+      // 星星一顆一顆跳出來
+      ctx.textAlign = "center";
+      for (let i = 0; i < 3; i++) {
+        const t = f - (128 + i * 10);
+        if (t < 0) continue;
+        const s = t < 8 ? 0.6 + t / 8 * 0.7 : 1.3 - Math.min(0.3, (t - 8) / 20);
+        ctx.save();
+        ctx.translate(210 + i * 40, 484);
+        ctx.scale(s, s);
+        ctx.fillStyle = i < R.stars ? "#ffd740" : "rgba(255,255,255,0.18)";
+        ctx.font = font(32);
+        ctx.fillText("★", 0, 0);
+        ctx.restore();
+      }
+      if (R.isNew && f > 165) {
+        ctx.fillStyle = Math.floor(frameCount / 10) % 2 ? "#ff5252" : "#ffd740";
+        ctx.font = font(15, "900");
+        ctx.fillText("🏆 新紀錄！", 250, 518);
+      }
+    }
+
+    function drawRedLightCard(f) {
+      // 救護車的紅藍燈
+      const flash = Math.floor(frameCount / 8) % 2;
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = flash ? "#ff1744" : "#2979ff";
+      circle(100, 120, 60);
+      ctx.fillStyle = flash ? "#2979ff" : "#ff1744";
+      circle(400, 120, 60);
+      ctx.restore();
+
+      const x = Math.max(250, 560 - f * 9);
+      ctx.font = font(64);
+      ctx.fillText("🚑", x, 140);
+      ctx.fillStyle = "#ff5252";
+      ctx.font = font(34, "900");
+      ctx.fillText("闖紅燈被撞了", 250, 220);
+      ctx.fillStyle = "#fff";
+      ctx.font = font(20, "bold");
+      ctx.fillText("🏥 已送往成大醫院", 250, 268);
+      ctx.fillStyle = "#cfd8dc";
+      ctx.font = font(15);
+      ctx.fillText("紅燈要停在「機車停等區」前，生命只有一條", 250, 312);
+      ctx.fillStyle = "#90a4ae";
+      ctx.font = font(14);
+      ctx.fillText("騎了 " + result.meters + " m，離" + dest.campus + "還有 " + result.left + " m", 250, 362);
+      ctx.fillStyle = "#ffd740";
+      ctx.font = font(18, "bold");
+      ctx.fillText("得分 ⭐ " + result.score.toLocaleString(), 250, 404);
+      ctx.fillStyle = "#80d8ff";
+      ctx.font = font(13);
+      ctx.fillText("💡 " + result.tip, 250, 470);
+    }
+
+    function drawFailCard(f) {
+      const s = f < 10 ? 0.5 + f / 10 * 0.6 : 1.1 - Math.min(0.1, (f - 10) / 30);
+      ctx.save();
+      ctx.translate(250, 130);
+      ctx.scale(s, s);
+      ctx.font = font(56);
+      ctx.fillText("💥", 0, 0);
+      ctx.restore();
+      ctx.fillStyle = "#ff5252";
+      ctx.font = font(40, "900");
+      ctx.fillText("GAME OVER", 250, 210);
+      ctx.fillStyle = "#fff";
+      ctx.font = font(17, "bold");
+      ctx.fillText(lastHitMsg || "台南的路太可怕了…", 250, 258);
+      ctx.fillStyle = "#cfd8dc";
+      ctx.font = font(15);
+      ctx.fillText("台南的路太可怕了…今天只好請假了", 250, 292);
+      ctx.fillStyle = "#90a4ae";
+      ctx.font = font(14);
+      ctx.fillText("騎了 " + result.meters + " m，離" + dest.campus + "還有 " + result.left + " m", 250, 346);
+      ctx.fillStyle = "#ffd740";
+      ctx.font = font(18, "bold");
+      ctx.fillText("得分 ⭐ " + result.score.toLocaleString(), 250, 390);
+      ctx.fillStyle = "#80d8ff";
+      ctx.font = font(13);
+      ctx.fillText("💡 " + result.tip, 250, 470);
+    }
+
+    // ===== 選目的地的畫面 =====
+    const DIFF_COLORS = ["#66bb6a", "#9ccc65", "#ffca28", "#ffa726", "#ef5350"];
+
     function drawMenu() {
-      ctx.fillStyle = "#1b2a38";
-      ctx.fillRect(0, 0, 500, 600);
+      // 背景：慢慢捲動的台南街道
+      ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      drawRoad();
+      drawSceneryGround();
+      drawSceneryOverhead();
+      ctx.restore();
+      const bg = ctx.createLinearGradient(0, 0, 0, H);
+      bg.addColorStop(0, "rgba(8,14,22,0.8)");
+      bg.addColorStop(1, "rgba(8,14,22,0.9)");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+
+      // 標題：旁邊有一台一直踩的腳踏車
+      ctx.save();
+      ctx.translate(136, 40);
+      ctx.rotate(Math.PI / 2);
+      ctx.scale(0.62, 0.62);
+      drawBikeSprite(frameCount * 0.25, false);
+      ctx.restore();
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.font = font(30, "900");
+      ctx.fillText("台南騎車生存記", 282, 40);
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 30px sans-serif";
-      ctx.fillText("🚲 台南騎車生存記", 250, 38);
-      ctx.fillStyle = "#80d8ff";
-      ctx.font = "bold 13px sans-serif";
-      ctx.textAlign = "right";
-      ctx.fillText("❓玩法", 488, 38);
-      ctx.textAlign = "center";
+      ctx.fillText("台南騎車生存記", 280, 38);
       ctx.fillStyle = "#b0bec5";
-      ctx.font = "15px sans-serif";
-      ctx.fillText("從台南火車站出發，平安又準時地去上課！", 250, 72);
+      ctx.font = font(13);
+      ctx.fillText("從台南火車站出發，平安又準時地去成大上課！", 250, 70);
+
+      drawButton(MENU_HELP_BUTTON, "❓ 玩法", "rgba(14,20,28,0.85)", 13);
+      drawIconButton(MENU_SOUND_BUTTON, soundIcon());
 
       // 每個目的地一張卡片
+      const records = loadRecords();
       for (let i = 0; i < DESTINATIONS.length; i++) {
         const d = DESTINATIONS[i];
         const top = 92 + i * 66;
         const selected = i === menuIndex;
 
-        ctx.fillStyle = selected ? "#2e7d32" : "#263848";
-        ctx.fillRect(20, top, 460, 60);
+        rr(20, top, 460, 60, 12);
         if (selected) {
+          const g = ctx.createLinearGradient(20, 0, 480, 0);
+          g.addColorStop(0, "rgba(27,94,32,0.95)");
+          g.addColorStop(1, "rgba(46,125,50,0.9)");
+          ctx.fillStyle = g;
+          ctx.fill();
+          ctx.save();
+          ctx.shadowColor = "#69f0ae";
+          ctx.shadowBlur = 12;
           ctx.strokeStyle = "#69f0ae";
-          ctx.lineWidth = 3;
-          ctx.strokeRect(20, top, 460, 60);
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.fillStyle = "rgba(28,40,54,0.9)";
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.08)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
         }
+
+        // 難度色條
+        rr(28, top + 9, 5, 42, 2.5);
+        ctx.fillStyle = DIFF_COLORS[d.stars - 1];
+        ctx.fill();
 
         // 第一行：校區・系館、難度星星
         ctx.textAlign = "left";
         ctx.fillStyle = "#fff";
-        ctx.font = "bold 17px sans-serif";
-        ctx.fillText(d.campus + "・" + d.building, 34, top + 16);
+        ctx.font = font(16, "bold");
+        ctx.fillText(d.campus + "・" + d.building, 42, top + 16);
         ctx.textAlign = "right";
+        ctx.font = font(14);
         ctx.fillStyle = "#ffd740";
-        ctx.font = "15px sans-serif";
-        ctx.fillText("★".repeat(d.stars) + "☆".repeat(5 - d.stars), 466, top + 16);
+        const filled = "★".repeat(d.stars);
+        const empty = "★".repeat(5 - d.stars);
+        ctx.fillStyle = "rgba(255,255,255,0.18)";
+        ctx.fillText(empty, 466, top + 16);
+        ctx.fillStyle = "#ffd740";
+        ctx.fillText(filled, 466 - ctx.measureText(empty).width, top + 16);
 
         // 第二行：路線
         ctx.textAlign = "left";
         ctx.fillStyle = "#cfd8dc";
-        ctx.font = "12px sans-serif";
-        ctx.fillText(d.route.map(s => s.street).join(" → "), 34, top + 36);
+        ctx.font = font(11.5);
+        ctx.fillText(d.route.map(s => s.street).join(" → "), 42, top + 35);
 
-        // 第三行：距離、時限、熱點數
+        // 第三行：距離、時限、熱點數；右邊是最佳紀錄
         const hotspots = d.route.filter(s => s.hotspot).length;
-        const meters = Math.round(totalLength(d) / 10);
         ctx.fillStyle = "#90a4ae";
-        ctx.fillText("路程 " + meters + " m｜時限 " + formatTime(timeLimit(d)) +
-                     "｜事故熱點 " + hotspots + " 處", 34, top + 51);
+        ctx.font = font(11);
+        ctx.fillText("路程 " + Math.round(totalLength(d) / 10) + " m｜時限 " + formatTime(timeLimit(d)) +
+                     "｜熱點 " + hotspots + " 處", 42, top + 51);
+        const rec = records[i];
+        if (rec) {
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#ffd740";
+          ctx.font = font(11.5, "bold");
+          ctx.fillText("🏅 " + "★".repeat(rec.stars) + " " + rec.score.toLocaleString() + " 分", 466, top + 51);
+        }
       }
 
       ctx.textAlign = "center";
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 15px sans-serif";
+      ctx.font = font(14, "bold");
       if (isTouch()) {
-        ctx.fillText("👆 點目的地出發　｜　點標題看玩法說明", 250, 572);
+        ctx.fillText("👆 點目的地出發", 250, 572);
       } else {
-        ctx.fillText("↑↓ 選擇　　空白鍵 出發　　H 玩法說明", 250, 572);
+        ctx.fillText("↑↓ 選擇　空白鍵 出發　H 玩法　M 音效", 250, 572);
       }
     }
 
@@ -1588,24 +3110,11 @@
     let helpNext = "menu";      // 看完說明要去哪：menu = 回選單、intro = 播開場動畫
     let pendingDest = 0;        // 選好、準備出發的目的地
 
-    // 有沒有看過說明（記在瀏覽器裡，下次打開就不會再自動跳出來）
-    // 有些瀏覽器不讓網頁存資料，所以也記在變數裡：至少這次打開時只會看到一次
-    let helpSeenThisVisit = false;
     function helpSeen() {
-      if (helpSeenThisVisit) return true;
-      try {
-        return localStorage.getItem("tainanBikeHelpSeen") === "1";
-      } catch (e) {
-        return false;
-      }
+      return storeGet("tainanBikeHelpSeen") === "1";
     }
     function markHelpSeen() {
-      helpSeenThisVisit = true;
-      try {
-        localStorage.setItem("tainanBikeHelpSeen", "1");
-      } catch (e) {
-        // 瀏覽器不讓存也沒關係，頂多下次再看一次
-      }
+      storeSet("tainanBikeHelpSeen", "1");
     }
 
     function showHelp(next) {
@@ -1628,6 +3137,7 @@
     function requestStart(index) {
       pendingDest = index;
       dest = DESTINATIONS[index];
+      Sound.confirm();
       if (!helpSeen()) {
         showHelp("intro");
       } else {
@@ -1637,53 +3147,58 @@
     }
 
     function drawHelp() {
-      ctx.fillStyle = "#1b2a38";
-      ctx.fillRect(0, 0, 500, 600);
+      const bg = ctx.createLinearGradient(0, 0, 0, H);
+      bg.addColorStop(0, "#1b2a38");
+      bg.addColorStop(1, "#111a24");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
 
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 28px sans-serif";
-      ctx.fillText("📖 玩法說明", 250, 36);
+      ctx.font = font(26, "900");
+      ctx.fillText("📖 玩法說明", 250, 32);
 
       // 每一項：圖示、標題、說明（說明可以有兩行）
       const items = [
         ["🎯", "目標", ["從台南火車站騎到成大，在上課前平安抵達校門"]],
-        ["🎮", "操作", ["↑ ▲ 加速　↓ ▼ 煞車（按住）", "← → ◀ ▶ 換車道，最邊邊再按一次騎上人行道"]],
-        ["🧭", "轉彎", ["看上方藍色橫幅 → 切到路面黃色的車道 → 按轉彎方向"]],
-        ["🚦", "紅綠燈", ["紅燈一定要停在停止線前", "闖紅燈會被撞，直接送成大醫院！"]],
-        ["🛵", "小心機車", ["逆向、從後面超車再切進來急煞、巷口衝出、闖紅燈", "注意畫面底部的「⚠️ 後方來車」"]],
+        ["🎮", "操作", ["↑ 加速　↓ 煞車（按住）　← → 換車道／騎上人行道", "B 鍵或 🔔 按鈴：讓想切進來、逆向的機車讓開"]],
+        ["🧭", "轉彎", ["看藍色橫幅 → 切到路面黃色的車道 → 按轉彎方向"]],
+        ["🚦", "紅綠燈", ["紅燈停在「機車停等區」前，闖紅燈會被撞、直接送醫院"]],
+        ["🛵", "小心機車", ["逆向、從後面超車再切進來急煞、巷口衝出、闖紅燈", "注意底部「⚠ 後方來車」，聽到「吱——」要小心"]],
         ["🛡️", "騎慢比較安全", ["時速低於 8 km/h，機車會繞過你，但太慢會遲到"]],
-        ["🧱", "人行道坑洞", ["人行道上有很小的坑洞和翹起的地磚，壓到會摔車"]],
-        ["❤️", "命和評分", ["3 條命，撞到扣 1 條", "剩幾條命拿幾顆星，遲到扣 1 顆"]]
+        ["🧱", "人行道", ["有很小的坑洞、翹起的地磚和違停機車，樹蔭下更難看清楚"]],
+        ["⭐", "計分", ["驚險閃過機車 +50、紅燈完美停車 +100、按鈴示警 +30", "準時抵達還有時間和生命加分，挑戰每條路線的最高分！"]],
+        ["❤️", "命", ["3 條命，撞到扣 1 條；剩幾條命拿幾顆星，遲到扣 1 顆"]]
       ];
 
-      let y = 82;
+      let y = 70;
       for (const [icon, title, lines] of items) {
         ctx.textAlign = "center";
-        ctx.font = "24px sans-serif";
-        ctx.fillText(icon, 42, y + 10);
+        ctx.font = font(22);
+        ctx.fillText(icon, 40, y + 9);
 
         ctx.textAlign = "left";
         ctx.fillStyle = "#ffd740";
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText(title, 70, y);
+        ctx.font = font(15, "bold");
+        ctx.fillText(title, 66, y);
 
         ctx.fillStyle = "#eceff1";
-        ctx.font = "13px sans-serif";
+        ctx.font = font(12.5);
         for (let i = 0; i < lines.length; i++) {
-          ctx.fillText(lines[i], 70, y + 21 + i * 18);
+          ctx.fillText(lines[i], 66, y + 19 + i * 17);
         }
-        y = y + 34 + lines.length * 18;
+        y = y + 31 + lines.length * 17;
       }
 
       // 下方提示
-      const blink = Math.floor(Date.now() / 500) % 2 === 0;
+      ctx.globalAlpha = 0.6 + Math.sin(frameCount * 0.1) * 0.4;
       ctx.textAlign = "center";
-      ctx.fillStyle = blink ? "#69f0ae" : "#fff";
-      ctx.font = "bold 16px sans-serif";
+      ctx.fillStyle = "#69f0ae";
+      ctx.font = font(16, "bold");
       const action = helpNext === "intro" ? "出發！" : "回到選單";
       ctx.fillText((isTouch() ? "點一下畫面 " : "按空白鍵 ") + action, 250, 578);
+      ctx.globalAlpha = 1;
     }
 
     // ===== 開場動畫：睡過頭 → 鬧鐘響 → 要遲到了 → 衝出門 =====
@@ -1695,11 +3210,23 @@
     function beginIntro() {
       inIntro = true;
       introFrame = 0;
+      Music.stop();
     }
 
     function endIntro() {
       inIntro = false;
       startGame(pendingDest);
+    }
+
+    // 動畫的音效（照時間點播放）
+    function introSounds(f) {
+      if (f >= 55 && f < 108 && (f - 55) % 14 === 0) Sound.alarm();
+      if (f === 81) Sound.gasp();
+      if (f === 141) Sound.sting();
+      if (f >= 202 && f < 258 && (f - 202) % 9 === 0) Sound.step();
+      if (f === 261) Sound.jump();
+      if (f === 276) Sound.bell();
+      if (f === 290) Sound.whoosh();
     }
 
     // 鬧鐘上的時間：上課時間 08:10 往前推「這個目的地的時限」
@@ -1717,7 +3244,7 @@
       ctx.translate(x, y);
       if (rot) ctx.rotate(rot);
       if (flip) ctx.scale(-1, 1);
-      ctx.font = size + "px sans-serif";
+      ctx.font = font(size);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(icon, 0, 0);
@@ -1726,10 +3253,10 @@
 
     // 畫面下方的字幕
     function drawCaption(text, color) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
       ctx.fillRect(0, 500, 500, 56);
       ctx.fillStyle = color || "#fff";
-      ctx.font = "bold 22px sans-serif";
+      ctx.font = font(22, "bold");
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(text, 250, 528);
@@ -1737,11 +3264,12 @@
 
     // 第 1 幕：房間，睡覺 → 鬧鐘響 → 驚醒
     function drawBedroom(f) {
-      // 牆壁和地板
       ctx.fillStyle = "#3e4a6b";
       ctx.fillRect(0, 0, 500, 430);
       ctx.fillStyle = "#8d6e63";
       ctx.fillRect(0, 430, 500, 170);
+      ctx.fillStyle = "rgba(0,0,0,0.12)";
+      for (let x = 0; x < 500; x += 50) ctx.fillRect(x, 430, 2, 170);
 
       // 窗戶：外面天剛亮
       const sky = ctx.createLinearGradient(0, 90, 0, 210);
@@ -1749,6 +3277,11 @@
       sky.addColorStop(1, "#ff8a65");
       ctx.fillStyle = sky;
       ctx.fillRect(250, 90, 170, 120);
+      ctx.fillStyle = "rgba(255,240,200,0.12)";
+      ctx.beginPath();
+      ctx.moveTo(250, 210); ctx.lineTo(420, 210); ctx.lineTo(470, 430); ctx.lineTo(200, 430);
+      ctx.closePath();
+      ctx.fill();
       ctx.strokeStyle = "#d7ccc8";
       ctx.lineWidth = 8;
       ctx.strokeRect(250, 90, 170, 120);
@@ -1761,9 +3294,7 @@
       ctx.fillStyle = "#5c6bc0";
       ctx.fillRect(170, 360, 255, 75);
       ctx.fillStyle = "#eceff1";
-      ctx.beginPath();
-      ctx.ellipse(385, 362, 38, 16, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ellipse(385, 362, 38, 16);
 
       // 床頭櫃和鬧鐘
       ctx.fillStyle = "#795548";
@@ -1773,7 +3304,7 @@
       ctx.save();
       ctx.translate(90 + shake, 345);
       ctx.fillStyle = "#212121";
-      ctx.fillRect(-42, -22, 84, 44);
+      rr(-42, -22, 84, 44, 6); ctx.fill();
       ctx.fillStyle = "#ff1744";
       ctx.font = "bold 15px monospace";
       ctx.textAlign = "center";
@@ -1784,10 +3315,10 @@
       // 鬧鐘響：「鈴鈴鈴！」
       if (ringing && Math.floor(f / 6) % 2 === 0) {
         ctx.fillStyle = "#ffd740";
-        ctx.font = "bold 26px sans-serif";
+        ctx.font = font(26, "900");
         ctx.textAlign = "center";
         ctx.fillText("鈴鈴鈴！", 95, 290);
-        ctx.font = "bold 22px sans-serif";
+        ctx.font = font(22, "bold");
         ctx.fillText("〰", 25, 330);
         ctx.fillText("〰", 165, 330);
       }
@@ -1795,9 +3326,8 @@
       // 玩家：睡覺 😴 → 驚醒 😳（跳起來一下）
       if (f < 80) {
         drawEmoji("😴", 383, 342, 46);
-        // 飄起來的 Zzz
         ctx.fillStyle = "#fff";
-        ctx.font = "bold 20px sans-serif";
+        ctx.font = font(20, "bold");
         for (let i = 0; i < 3; i++) {
           const t = (f + i * 20) % 60;
           ctx.globalAlpha = 1 - t / 60;
@@ -1809,11 +3339,8 @@
         drawEmoji("😳", 383, 332 + jump, 52);
       }
 
-      if (f < 55) {
-        drawCaption("早上的台南…… 還在睡覺");
-      } else {
-        drawCaption("⏰ 鈴鈴鈴！鬧鐘響了！", "#ffd740");
-      }
+      if (f < 55) drawCaption("早上的台南…… 還在睡覺");
+      else drawCaption("⏰ 鈴鈴鈴！鬧鐘響了！", "#ffd740");
     }
 
     // 第 2 幕：鬧鐘特寫 → 完蛋要遲到了
@@ -1826,10 +3353,12 @@
       ctx.save();
       ctx.translate(250 + shake, 200);
       ctx.fillStyle = "#111";
-      ctx.fillRect(-190, -75, 380, 150);
+      rr(-190, -75, 380, 150, 16); ctx.fill();
       ctx.strokeStyle = "#b0bec5";
       ctx.lineWidth = 6;
-      ctx.strokeRect(-190, -75, 380, 150);
+      ctx.stroke();
+      ctx.shadowColor = "#ff1744";
+      ctx.shadowBlur = 20;
       ctx.fillStyle = "#ff1744";
       ctx.font = "bold 66px monospace";
       ctx.textAlign = "center";
@@ -1838,11 +3367,11 @@
       ctx.restore();
 
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 24px sans-serif";
+      ctx.font = font(24, "bold");
       ctx.textAlign = "center";
       ctx.fillText("📚 第一堂課 08:10", 250, 318);
       ctx.fillStyle = "#b0bec5";
-      ctx.font = "18px sans-serif";
+      ctx.font = font(18);
       ctx.fillText("地點：" + dest.campus + "・" + dest.building, 250, 350);
 
       // 驚嚇的臉越來越大
@@ -1857,13 +3386,19 @@
 
     // 第 3 幕：衝出家門 → 跳上腳踏車 → 出發
     function drawStreet(f) {
-      // 天空
-      ctx.fillStyle = "#81d4fa";
+      const sky = ctx.createLinearGradient(0, 0, 0, 330);
+      sky.addColorStop(0, "#64b5f6");
+      sky.addColorStop(1, "#bbdefb");
+      ctx.fillStyle = sky;
       ctx.fillRect(0, 0, 500, 330);
 
-      // 台南的透天厝（一排不同顏色的房子）
+      // 台南的透天厝（一排不同顏色的房子），屋頂上有水塔
       const houses = [["#ffe0b2", 0], ["#c5e1a5", 120], ["#f8bbd0", 240], ["#b3e5fc", 360]];
       for (const [color, x] of houses) {
+        ctx.fillStyle = "#cfd8dc";
+        ctx.fillRect(x + 80, 84, 22, 22);
+        ctx.fillStyle = "#b0bec5";
+        ctx.fillRect(x + 78, 82, 26, 4);
         ctx.fillStyle = color;
         ctx.fillRect(x, 110, 120, 220);
         ctx.fillStyle = "#90a4ae";
@@ -1881,7 +3416,7 @@
       ctx.fillRect(104, 296, 5, 5);
 
       // 騎樓、馬路、車道線
-      ctx.fillStyle = "#c8b9a6";
+      ctx.fillStyle = "#b0614a";
       ctx.fillRect(0, 330, 500, 50);
       ctx.fillStyle = "#555";
       ctx.fillRect(0, 380, 500, 220);
@@ -1892,9 +3427,7 @@
       }
 
       if (f < 260) {
-        // 腳踏車停在路邊
         drawEmoji("🚲", 300, 405, 54, true);
-        // 玩家從家門跑向腳踏車（跑步時上下彈跳）
         const t = Math.min(1, (f - 200) / 55);
         const x = 90 + t * 190;
         const bounce = Math.abs(Math.sin(f * 0.5)) * -8;
@@ -1902,76 +3435,107 @@
         drawEmoji("🎒", x - 18, 352 + bounce, 22);
         drawCaption("抓起書包衝出門！");
       } else if (f < 275) {
-        // 跳上腳踏車
         drawEmoji("🚲", 300, 405, 54, true);
         const t = (f - 260) / 15;
         drawEmoji("🏃", 280 + t * 20, 360 - Math.sin(t * Math.PI) * 40, 50, true);
         drawCaption("跳上腳踏車！");
       } else {
-        // 騎上車、加速衝出畫面
         const t = f - 275;
         const x = 300 + 0.035 * t * t;
         drawEmoji("🚴", x, 400, 60, true);
-        // 速度線和煙塵
-        ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
         for (let i = 0; i < 4; i++) {
           const len = Math.min(120, t * 2);
           ctx.fillRect(x - 50 - len, 382 + i * 12, len, 3);
         }
         drawEmoji("💨", x - 55, 420, 28);
 
-        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.fillStyle = "rgba(0,0,0,0.65)";
         ctx.fillRect(0, 486, 500, 84);
         ctx.fillStyle = "#ffd740";
-        ctx.font = "bold 26px sans-serif";
+        ctx.font = font(26, "900");
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText("衝啊！🚲", 250, 510);
         ctx.fillStyle = "#fff";
-        ctx.font = "bold 17px sans-serif";
-        ctx.fillText("目的地：" + dest.campus + "・" + dest.building +
-                     "　⏰ 剩 " + formatTime(timeLimit(dest)), 250, 546);
+        ctx.font = font(16, "bold");
+        ctx.fillText("目的地：" + dest.campus + "・" + dest.building + "　⏰ 剩 " + formatTime(timeLimit(dest)), 250, 546);
       }
     }
 
     function drawIntro() {
       const f = introFrame;
-      if (f < 110) {
-        drawBedroom(f);
-      } else if (f < 200) {
-        drawClockCloseUp(f);
-      } else {
-        drawStreet(f);
-      }
+      ctx.clearRect(0, 0, W, H);
+      if (f < 110) drawBedroom(f);
+      else if (f < 200) drawClockCloseUp(f);
+      else drawStreet(f);
 
       // 換場時淡入淡出
-      const fades = [110, 200];
       let alpha = 0;
-      for (const at of fades) {
+      for (const at of [110, 200]) {
         const d = Math.abs(f - at);
         if (d < 10) alpha = Math.max(alpha, 1 - d / 10);
       }
       if (f > INTRO_LENGTH - 25) alpha = (f - (INTRO_LENGTH - 25)) / 25;
       if (alpha > 0) {
-        ctx.fillStyle = "rgba(0, 0, 0, " + alpha + ")";
-        ctx.fillRect(0, 0, 500, 600);
+        ctx.fillStyle = "rgba(0,0,0," + alpha + ")";
+        ctx.fillRect(0, 0, W, H);
       }
 
-      // 跳過提示
-      ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-      ctx.font = "13px sans-serif";
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.font = font(13);
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
       ctx.fillText(isTouch() ? "點一下畫面跳過 ⏭" : "空白鍵跳過 ⏭", 490, 588);
+
+      drawHomeButton();   // 選錯目的地可以馬上回去
     }
 
-    // 開始一局：選好目的地後呼叫
+    // ===== 暫停、回到選單 =====
+
+    let paused = false;
+
+    function openPause() {
+      paused = true;
+      for (const k in keys) keys[k] = false;   // 放開所有按住的鍵（免得回來時還在加速）
+    }
+
+    function resumeGame() {
+      paused = false;
+      for (const k in keys) keys[k] = false;
+    }
+
+    function drawPause() {
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.font = font(42, "900");
+      ctx.fillText("⏸ 暫停", 250, 210);
+      ctx.font = font(18);
+      ctx.fillStyle = "#cfd8dc";
+      ctx.fillText("要回到選單、重新選目的地嗎？", 250, 270);
+
+      drawButton(PAUSE_MENU_BUTTON, "🏠 回到選單", "#c62828", 20);
+      drawButton(PAUSE_RESUME_BUTTON, "▶ 繼續騎車", "#2e7d32", 20);
+
+      if (!isTouch()) {
+        ctx.fillStyle = "#b0bec5";
+        ctx.font = font(15);
+        ctx.fillText("空白鍵：回到選單　　Esc：繼續騎車", 250, 425);
+      }
+    }
+
+    // ===== 開始一局、重新開始、回到選單 =====
+
     function startGame(index) {
       dest = DESTINATIONS[index];
       resetGame();
       inMenu = false;
       message = "🎯 目的地：" + dest.campus + "・" + dest.building;
       messageTimer = 120;
+      Music.start();
     }
 
     // 重新開始：把所有會變的資料都設回一開始的樣子
@@ -1984,13 +3548,20 @@
       player.tilt = 0;
       speed = 3;
 
-      // 道路、地標、障礙物
+      // 道路、障礙物、特效
       roadOffset = 0;
-      scenery = [];
-      sceneryTimer = 0;
+      groundScroll = 0;
       obstacles = [];
       obstacleTimer = 0;
       nextObstacleTime = 160;
+      particles = [];
+      popups = [];
+      skids = [];
+      confetti = [];
+      tagQueue = [];
+      hitFlash = 0;
+      bellCooldown = 0;
+      wasBraking = false;
 
       // 路線和目的地
       segIndex = 0;
@@ -2008,163 +3579,161 @@
       turnQueued = 0;
       turning = null;
 
-      // 命和各種效果
+      // 街景
+      scenery = [];
+      fillScenery(-160, false);
+
+      // 命、分數、各種效果
       lives = 3;
       invincibleTimer = 0;
       shakeTimer = 0;
       message = "";
       messageTimer = 0;
+      lastHitMsg = "";
       gameOver = false;
       gameOverReason = "";
+      result = null;
+      resultFrame = 0;
+      paused = false;
+      stats.distance = 0;
+      stats.nearMiss = 0;
+      stats.perfectStop = 0;
+      stats.bell = 0;
     }
 
-    // ===== 時速表、命、路名、路口資訊 =====
-    function drawHUD() {
-      const kmh = Math.round(speed * 4);   // 換算成看起來合理的時速
+    function enterMenu() {
+      inMenu = true;
+      inIntro = false;
+      inHelp = false;
+      paused = false;
+      gameOver = false;
+      intersection = null;
+      obstacles = [];
+      gate = null;
+      turning = null;
+      particles = [];
+      popups = [];
+      skids = [];
+      confetti = [];
+      scenery = [];
+      fillScenery(-160, false);
+      for (const k in keys) keys[k] = false;
+      Music.start();
+    }
 
-      // 左上：時速
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(108, 10, 120, 46);
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 20px sans-serif";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      ctx.fillText(kmh + " km/h", 116, 14);
-      if (speed < SAFE_SPEED) {
-        ctx.fillText("🛡️", 196, 14);   // 慢速安全：機車會繞過你
+    // 正在騎車（不是選單、說明、動畫、結束畫面）
+    function isPlaying() {
+      return !inMenu && !inHelp && !inIntro && !gameOver;
+    }
+
+    function toggleMute() {
+      Sound.muted = !Sound.muted;
+      Sound.applyMute();
+      storeSet("tainanBikeMuted", Sound.muted ? "1" : "0");
+      if (isPlaying()) {
+        message = Sound.muted ? "🔇 已靜音（M 鍵開關）" : "🔊 音效開啟";
+        messageTimer = 60;
       }
-      ctx.fillStyle = speed > 7 ? "#ff5252" : "#69f0ae";
-      ctx.fillRect(116, 42, 104 * (speed / MAX_SPEED), 6);
+    }
 
-      // 左上：現在的路名
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(108, 60, 120, 24);
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 14px sans-serif";
-      ctx.textBaseline = "middle";
-      ctx.fillText("📍 " + currentStreet, 116, 72);
+    // ===== 第 4 步：遊戲迴圈 =====
 
-      // 右上：剩下的命（紅心）和失去的命（黑心）
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(292, 10, 100, 36);
-      ctx.font = "20px sans-serif";
-      ctx.textAlign = "right";
-      ctx.fillText("❤️".repeat(lives) + "🖤".repeat(3 - lives), 386, 29);
+    let wasBraking = false;   // 上一幀有沒有在煞車（用來判斷「剛開始煞車」）
 
-      // 右上：上課倒數
-      const remain = timeLimit(dest) - elapsedFrames / 60;
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(292, 50, 100, 26);
-      ctx.font = "bold 14px sans-serif";
-      ctx.textAlign = "right";
-      if (remain >= 0) {
-        ctx.fillStyle = remain < 15 ? "#ffd740" : "#fff";
-        ctx.fillText("⏰ " + formatTime(remain), 386, 63);
+    // 更新遊戲資料（只算數字，不畫圖）
+    function update() {
+      if (turning) {
+        updateTurn();         // 轉彎中：沿著圓弧走，地面不捲動
       } else {
-        ctx.fillStyle = "#ff5252";
-        ctx.fillText("遲到 " + formatTime(-remain), 386, 63);
-      }
+        updatePlayer();
+        scrollGround(speed);
+        updateScenery(speed);
+        segDistance = segDistance + speed;   // 這一段路騎了多遠
+        updateGate();
 
-      // 左上：導航
-      const seg = currentSeg();
-      const metersLeft = Math.max(0, Math.round((seg.length - segDistance) / 10));
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.fillRect(108, 88, 160, seg.warning ? 42 : 26);
-      ctx.textAlign = "left";
-      ctx.fillStyle = "#80d8ff";
-      ctx.font = "bold 12px sans-serif";
-      if (seg.turn) {
-        const nextStreet = dest.route[segIndex + 1].street;
-        ctx.fillText("🧭 " + metersLeft + "m 後" + (seg.turn === 1 ? "右轉" : "左轉") + nextStreet, 114, 101);
-      } else {
-        ctx.fillText("🎯 " + dest.campus + " 剩 " + metersLeft + "m", 114, 101);
-      }
-      if (seg.warning) {
-        ctx.fillStyle = "#ffab40";
-        ctx.font = "12px sans-serif";
-        ctx.fillText("⚠️ " + seg.warning, 114, 120);
-      }
-
-      // 右上：前方路口的燈號和轉彎提示
-      const I = intersection;
-      if (I && !I.passed && !I.passedStopLine) {
-        const lightText = { red: "紅燈", yellow: "黃燈", green: "綠燈" };
-        const lightColor = { red: "#ff1744", yellow: "#ffd600", green: "#00e676" };
-        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-        ctx.fillRect(272, 80, 120, I.hotspot ? 72 : 52);
-
-        ctx.fillStyle = lightColor[I.light];
-        ctx.beginPath();
-        ctx.arc(286, 94, 7, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.textAlign = "left";
-        ctx.font = "bold 14px sans-serif";
-        const seconds = Math.ceil(I.lightTimer / 60);
-        ctx.fillText(lightText[I.light] + " " + seconds + " 秒", 300, 94);
-
-        ctx.fillStyle = "#fff";
-        ctx.font = "12px sans-serif";
-        if (!I.isRoute) {
-          ctx.fillText("🧭 這個路口直走", 280, 118);
-        } else if (I.crossDir === 1) {
-          ctx.fillText("最右車道按 → 右轉", 280, 118);
-        } else {
-          ctx.fillText("最左車道按 ← 左轉", 280, 118);
+        // 用力煞車：留下煞車痕、發出煞車聲
+        const braking = !!keys["ArrowDown"];
+        if (braking && speed > 2.2) {
+          skids.push({ x: player.x, y: player.y + 26, len: speed + 1, life: 220 });
+          if (skids.length > 260) skids.shift();
         }
-        if (I.hotspot) {
-          ctx.fillStyle = "#ff8a80";
-          ctx.font = "bold 12px sans-serif";
-          ctx.fillText("⚠️ 事故熱點", 280, 140);
-        }
+        if (braking && !wasBraking && speed > 4.5) Sound.screech();
+        wasBraking = braking;
       }
+      stats.distance = stats.distance + speed;
+      elapsedFrames = elapsedFrames + 1;
+      updateIntersection();
+      updateObstacles();
+      updateFx(turning ? 0 : speed);
+      checkCollisions();
+      updateEffects();
+    }
+
+    // 每一個「固定的 1/60 秒」做一次
+    function tick() {
+      frameCount++;
+      if (inHelp) return;
+      if (inIntro) {
+        introFrame++;
+        introSounds(introFrame);
+        if (introFrame >= INTRO_LENGTH) endIntro();
+        return;
+      }
+      if (inMenu) {
+        // 選單背景的街道慢慢往前捲
+        scrollGround(1.6);
+        updateScenery(1.6);
+        return;
+      }
+      if (paused) return;
+      if (gameOver) {
+        resultFrame++;
+        updateFx(0);
+        updateConfetti();
+        return;
+      }
+      update();
+    }
+
+    // 依照目前的狀態畫出畫面
+    function render() {
+      ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);   // 之後都用 500 × 600 的座標畫
+      if (inHelp) drawHelp();
+      else if (inIntro) drawIntro();
+      else if (inMenu) drawMenu();
+      else {
+        draw();
+        if (paused) drawPause();
+      }
+    }
+
+    // 主迴圈：不管螢幕是 60Hz 還是 144Hz，遊戲都固定每秒更新 60 次
+    const STEP = 1000 / 60;
+    let lastTime = 0;
+    let accumulator = 0;
+
+    function frame(now) {
+      if (!lastTime) lastTime = now;
+      let dt = now - lastTime;
+      lastTime = now;
+      if (dt > 250) dt = 250;   // 切到別的分頁再回來，不要一口氣快轉
+      accumulator += dt;
+      let steps = 0;
+      while (accumulator >= STEP - 0.5 && steps < 8) {
+        tick();
+        accumulator -= STEP;
+        steps++;
+      }
+      if (accumulator < 0) accumulator = 0;
+      render();
+      requestAnimationFrame(frame);
     }
 
     // ===== 第 3 步：鍵盤控制 =====
 
-    // 畫出整個畫面
-    function draw() {
-      ctx.clearRect(0, 0, 500, 600);
-
-      // 遊戲世界（撞到時會震動，轉彎時會旋轉）
-      ctx.save();
-      if (shakeTimer > 0) {
-        ctx.translate(randomBetween(-6, 6), randomBetween(-6, 6));
-      }
-      if (turning) {
-        // 攝影機：以腳踏車為中心，把世界反方向轉 → 腳踏車看起來一直朝上
-        ctx.translate(turning.anchorX, 520);
-        ctx.rotate(-turning.dir * turning.phi);
-        ctx.translate(-player.x, -player.y);
-      }
-      drawRoad();
-      if (intersection) {
-        drawIntersection(intersection);
-        drawRouteGuide(intersection);
-      }
-      drawScenery();
-      drawObstacles();
-      drawGate();
-      if (intersection && !intersection.passed) {
-        drawTrafficLights(intersection);
-      }
-      drawPlayer();
-      drawRearWarnings();
-      ctx.restore();
-
-      // 介面（不跟著震動和旋轉）
-      drawHUD();
-      drawTurnBanner();
-      drawMessage();
-      if (gameOver) {
-        drawGameOver();
-      }
-    }
-
     // 記錄哪些按鍵「正被按住」（加速、煞車要按住才有效）
     const keys = {};
 
-    // 監聽鍵盤：只要有按鍵被按下，就執行裡面的程式
     document.addEventListener("keydown", function (event) {
       // 方向鍵和空白鍵不要讓網頁捲動
       if (event.key.startsWith("Arrow") || event.key === " ") {
@@ -2172,22 +3741,28 @@
       }
       keys[event.key] = true;
 
+      // 第一次按鍵時打開聲音（瀏覽器規定）
+      Sound.unlock();
+      if (!Music.playing && (inMenu || isPlaying())) Music.start();
+
       // 換車道只在「剛按下」時算一次，按住不放不會連續換
       if (event.repeat) return;
 
-      // 玩法說明：空白鍵、Enter、Esc 繼續
-      if (inHelp) {
-        if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
-          closeHelp();
-        }
+      if (event.key === "m" || event.key === "M") {
+        toggleMute();
         return;
       }
 
-      // 開場動畫：空白鍵、Enter、Esc 跳過
+      // 玩法說明：空白鍵、Enter、Esc 繼續
+      if (inHelp) {
+        if (event.key === " " || event.key === "Enter" || event.key === "Escape") closeHelp();
+        return;
+      }
+
+      // 開場動畫：空白鍵、Enter 跳過；Esc 回選單
       if (inIntro) {
-        if (event.key === " " || event.key === "Enter" || event.key === "Escape") {
-          endIntro();
-        }
+        if (event.key === " " || event.key === "Enter") endIntro();
+        if (event.key === "Escape") enterMenu();
         return;
       }
 
@@ -2195,25 +3770,40 @@
       if (inMenu) {
         if (event.key === "ArrowUp") {
           menuIndex = (menuIndex - 1 + DESTINATIONS.length) % DESTINATIONS.length;
+          Sound.click();
         }
         if (event.key === "ArrowDown") {
           menuIndex = (menuIndex + 1) % DESTINATIONS.length;
+          Sound.click();
         }
-        if (event.key === " " || event.key === "Enter") {
-          requestStart(menuIndex);
-        }
-        if (event.key === "h" || event.key === "H") {
-          showHelp("menu");
-        }
+        if (event.key === " " || event.key === "Enter") requestStart(menuIndex);
+        if (event.key === "h" || event.key === "H") showHelp("menu");
         return;
       }
 
-      // 遊戲結束時按空白鍵 → 回到選單
+      // 結束畫面：空白鍵回選單（播一下才能跳過，免得不小心按掉）
       if (gameOver) {
-        if (event.key === " ") {
-          inMenu = true;
-        }
-        return;  // 遊戲結束時，其他按鍵都不理
+        if ((event.key === " " || event.key === "Enter") && resultFrame > 30) enterMenu();
+        return;
+      }
+
+      // 暫停中：空白鍵回選單、Esc 繼續騎
+      if (paused) {
+        if (event.key === " " || event.key === "Enter") enterMenu();
+        if (event.key === "Escape") resumeGame();
+        return;
+      }
+
+      // 騎車中按 Esc → 暫停
+      if (event.key === "Escape") {
+        openPause();
+        return;
+      }
+
+      // 按鈴
+      if (event.key === "b" || event.key === "B") {
+        ringBell();
+        return;
       }
 
       // 轉彎中不能換車道
@@ -2221,9 +3811,7 @@
 
       // 前方路口是否在「可以準備轉彎」的距離內
       const I = intersection;
-      const turnPointY = I ? I.y + 100 + TURN_RADIUS : 0;
-      const nearIntersection = I && !I.passed && turnPointY < player.y && turnPointY > player.y - 450;
-      const canQueue = nearIntersection && I.isRoute;   // 只有導航路口能轉彎
+      const canQueue = I && !I.passed && I.isRoute && inTurnRange(I);   // 只有導航路口能轉彎
 
       // 車道編號：-1 = 左邊人行道、0 ~ 2 = 馬路、3 = 右邊人行道
       if (event.key === "ArrowLeft") {
@@ -2231,6 +3819,7 @@
           turnQueued = -1;                 // 在最左車道、導航要左轉 → 準備左轉
           message = "↰ 準備左轉" + I.name;
           messageTimer = 45;
+          Sound.confirm();
         } else if (player.lane > -1) {
           player.lane = player.lane - 1;   // 往左換車道（最左可以騎上人行道）
           turnQueued = 0;                  // 換車道就取消轉彎
@@ -2241,6 +3830,7 @@
           turnQueued = 1;                  // 在最右車道、導航要右轉 → 準備右轉
           message = "↱ 準備右轉" + I.name;
           messageTimer = 45;
+          Sound.confirm();
         } else if (player.lane < 3) {
           player.lane = player.lane + 1;   // 往右換車道（最右可以騎上人行道）
           turnQueued = 0;
@@ -2253,63 +3843,7 @@
       keys[event.key] = false;
     });
 
-    // ===== 第 4 步：遊戲迴圈 =====
-
-    // 更新資料（只算數字，不畫圖）
-    function update() {
-      if (turning) {
-        updateTurn();         // 轉彎中：沿著圓弧走，地面不捲動
-      } else {
-        updatePlayer();
-        roadOffset = roadOffset + speed;
-        if (roadOffset >= 50) {
-          roadOffset = roadOffset - 50; // 移滿一個虛線週期就歸零
-        }
-        updateScenery();
-        segDistance = segDistance + speed;   // 這一段路騎了多遠
-        updateGate();
-      }
-      elapsedFrames = elapsedFrames + 1;
-      updateIntersection();
-      updateObstacles();
-      checkCollisions();
-      updateEffects();
-    }
-
-    // 遊戲迴圈：更新 → 重畫 → 等下一幀 → 再來一次
-    function gameLoop() {
-      if (inHelp) {
-        drawHelp();   // 玩法說明
-        requestAnimationFrame(gameLoop);
-        return;
-      }
-      if (inIntro) {
-        introFrame = introFrame + 1;   // 開場動畫一幀一幀往前播
-        drawIntro();
-        if (introFrame >= INTRO_LENGTH) {
-          endIntro();
-        }
-        requestAnimationFrame(gameLoop);
-        return;
-      }
-      if (inMenu) {
-        drawMenu();   // 選目的地的畫面
-        requestAnimationFrame(gameLoop);
-        return;
-      }
-      if (!gameOver) {
-        update();   // 遊戲結束後就不再更新，畫面停住
-      }
-      draw();
-      requestAnimationFrame(gameLoop);
-    }
-
     // ===== 手機觸控 =====
-
-    // 是不是觸控裝置（手機、平板）
-    function isTouch() {
-      return window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
-    }
 
     // 送出一個「假的」鍵盤事件 → 直接沿用上面寫好的鍵盤控制
     function sendKey(type, key) {
@@ -2334,23 +3868,32 @@
       btn.addEventListener("pointerleave", release);   // 手指滑出按鈕也算放開
     }
 
-    // 點畫面：選單時點目的地卡片直接出發；結束畫面點一下回到選單
+    // 點畫面
     canvas.addEventListener("pointerdown", function (event) {
+      Sound.unlock();
+      if (!Music.playing && (inMenu || isPlaying())) Music.start();
+
       // 畫面可能被縮放過，要把點擊位置換算回遊戲裡的座標
       const rect = canvas.getBoundingClientRect();
-      const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+      const x = (event.clientX - rect.left - canvas.clientLeft) * W / canvas.clientWidth;
+      const y = (event.clientY - rect.top - canvas.clientTop) * H / canvas.clientHeight;
 
       if (inHelp) {
-        closeHelp();          // 說明畫面：點一下繼續
+        closeHelp();                         // 說明畫面：點一下繼續
       } else if (inIntro) {
-        endIntro();           // 開場動畫：點一下跳過
+        if (inButton(HOME_BUTTON, x, y)) enterMenu();   // 點 🏠 回選單
+        else endIntro();                                  // 點其他地方跳過動畫
       } else if (inMenu) {
-        if (y < 85) {
-          showHelp("menu");   // 點標題區：看玩法說明
+        if (inButton(MENU_SOUND_BUTTON, x, y)) {
+          toggleMute();
+          return;
+        }
+        if (inButton(MENU_HELP_BUTTON, x, y) || y < 85) {
+          showHelp("menu");                  // 點標題區：看玩法說明
           return;
         }
         for (let i = 0; i < DESTINATIONS.length; i++) {
-          const top = 92 + i * 66;   // 跟 drawMenu 裡卡片的位置一樣
+          const top = 92 + i * 66;           // 跟 drawMenu 裡卡片的位置一樣
           if (y >= top && y <= top + 60) {
             menuIndex = i;
             requestStart(i);
@@ -2358,12 +3901,34 @@
           }
         }
       } else if (gameOver) {
-        inMenu = true;
+        if (resultFrame > 30) enterMenu();
+      } else if (paused) {
+        if (inButton(PAUSE_MENU_BUTTON, x, y)) enterMenu();
+        else if (inButton(PAUSE_RESUME_BUTTON, x, y)) resumeGame();
+      } else if (inButton(HOME_BUTTON, x, y)) {
+        openPause();                         // 騎車中點 🏠 → 暫停
+      } else if (inButton(SOUND_BUTTON, x, y)) {
+        toggleMute();
       }
     });
 
-    // 啟動遊戲！
-    gameLoop();
+    // 切到別的分頁：自動暫停、聲音也停
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) {
+        if (isPlaying() && !paused) openPause();
+        if (Sound.ctx) Sound.ctx.suspend();
+      } else if (Sound.ctx) {
+        Sound.ctx.resume();
+      }
+    });
+
+    // ===== 啟動遊戲！=====
+    initPatterns();
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+    Sound.muted = storeGet("tainanBikeMuted") === "1";
+    enterMenu();
+    requestAnimationFrame(frame);
   </script>
 </body>
 </html>
