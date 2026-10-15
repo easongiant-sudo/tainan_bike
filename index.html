@@ -2083,7 +2083,7 @@
     }
 
     // 台灣的紅綠燈是橫的（紅、黃、綠），旁邊還有倒數秒數
-    function drawSignalHead(cx, cy, I, scale) {
+    function drawSignalHead(cx, cy, I, scale, countdownLeft) {
       ctx.save();
       ctx.translate(cx, cy);
       ctx.scale(scale, scale);
@@ -2100,30 +2100,43 @@
         circle(dx, 0, 5.5);
         ctx.shadowBlur = 0;
       }
-      // 倒數秒數
+      // 倒數秒數（可以放在燈的左邊或右邊）
+      const bx = countdownLeft ? -49 : 27;
       ctx.fillStyle = "#0b0b0b";
-      rr(27, -9, 22, 18, 3); ctx.fill();
+      rr(bx, -9, 22, 18, 3); ctx.fill();
       ctx.fillStyle = I.light === "green" ? "#00e676" : (I.light === "yellow" ? "#ffd600" : "#ff1744");
       ctx.font = font(12, "bold");
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(Math.min(99, Math.ceil(I.lightTimer / 60))), 38, 1);
+      ctx.fillText(String(Math.min(99, Math.ceil(I.lightTimer / 60))), bx + 11, 1);
       ctx.restore();
     }
 
-    // 燈桿立在路口「對面」的轉角，伸到馬路上空，面對等紅燈的你（畫在最上層）
+    // 紅綠燈（畫在最上層）
     function drawTrafficLights(I) {
-      const y = I.y - 170;
       ctx.strokeStyle = "#5f6368";
       ctx.lineWidth = 4;
       ctx.lineCap = "round";
-      line(436, y, 300, y);
-      line(64, y, 150, y);
+
+      // 1. 路口「對面」的燈：從轉角伸到馬路上空，面對等紅燈的你
+      const far = I.y - 170;
+      line(436, far, 300, far);
+      line(64, far, 150, far);
       ctx.fillStyle = "#3c4043";
-      circle(436, y, 6);
-      circle(64, y, 6);
-      drawSignalHead(300, y, I, 1);
-      drawSignalHead(150, y, I, 0.85);
+      circle(436, far, 6);
+      circle(64, far, 6);
+      drawSignalHead(300, far, I, 1, false);
+      drawSignalHead(150, far, I, 0.85, false);
+
+      // 2. 路口「這一側」的燈：立在兩邊路緣，從遠處就看得到，停下來時也不會擋到你
+      const near = I.y + 262;
+      line(438, near, 404, near);
+      line(62, near, 96, near);
+      ctx.fillStyle = "#3c4043";
+      circle(438, near, 6);
+      circle(62, near, 6);
+      drawSignalHead(392, near, I, 0.85, false);
+      drawSignalHead(108, near, I, 0.85, true);
     }
 
     // ===== 轉彎提示 =====
@@ -2179,26 +2192,27 @@
         hintColor = "#fff";
       }
 
-      const g = ctx.createLinearGradient(0, 160, 0, 224);
+      // 橫幅放在上方資訊列的正下方，才不會擋到前面的路和紅綠燈
+      const g = ctx.createLinearGradient(0, 98, 0, 152);
       g.addColorStop(0, "rgba(21,101,192,0.95)");
       g.addColorStop(1, "rgba(13,71,161,0.95)");
-      rr(100, 160, 300, 64, 14);
+      rr(96, 98, 258, 54, 12);
       ctx.fillStyle = g;
       ctx.fill();
       ctx.strokeStyle = "#ffd740";
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
-      drawTurnArrow(140, 196, seg.turn, "#ffd740", 0.95);
+      drawTurnArrow(128, 128, seg.turn, "#ffd740", 0.78);
 
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#fff";
-      ctx.font = font(20, "bold");
-      ctx.fillText("前方" + dirText + " " + nextStreet, 178, 180);
+      ctx.font = font(18, "bold");
+      ctx.fillText("前方" + dirText + " " + nextStreet, 158, 115);
       ctx.fillStyle = hintColor;
-      ctx.font = font(15, "bold");
-      ctx.fillText(hint, 178, 207);
+      ctx.font = font(14, "bold");
+      ctx.fillText(hint, 158, 138);
     }
 
     // ===== 校門：最後一段路快騎完時出現，騎到就抵達 =====
