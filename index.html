@@ -1042,6 +1042,8 @@
     let obstacles = [];         // 目前畫面上的障礙物
     let obstacleTimer = 0;      // 計「騎了多遠」
     let nextObstacleTime = 160; // 下一波要再騎多遠才出現（每次隨機決定）
+    let safeTimer = 0;          // 安全時間（幀）：還沒歸零前不會出現任何障礙物
+    const SAFE_AFTER_TURN = 120; // 轉彎成功後的安全時間：120 幀 = 2 秒
 
     // 機車、汽車的外觀（顏色隨機，每台都不一樣）
     const SCOOTER_COLORS = ["#e53935", "#f5f5f5", "#1e88e5", "#263238", "#f06292", "#43a047", "#fdd835", "#8e24aa", "#90a4ae", "#ff7043"];
@@ -1277,7 +1279,11 @@
     function updateObstacles() {
       const scroll = turning ? 0 : speed;   // 轉彎時地面不捲動
 
-      if (!turning) {
+      if (safeTimer > 0) {
+        // 安全時間：不生任何障礙物，距離也不累積（時間到之後才重新開始算）
+        safeTimer = safeTimer - 1;
+        obstacleTimer = 0;
+      } else if (!turning) {
         // 用「距離」決定何時出現：騎得慢，障礙就來得慢
         obstacleTimer = obstacleTimer + speed;
         if (obstacleTimer >= nextObstacleTime) {
@@ -2054,14 +2060,10 @@
         }
       }
 
-      // 會動的車子直接清掉；坑洞、違停機車是固定在地上的，換算到新座標
-      obstacles = obstacles.filter(o => o.type === "pothole" || o.type === "parked");
-      for (const o of obstacles) {
-        const p = toNew(o.x, o.y);
-        o.x = p.x;
-        o.y = p.y;
-        if (o.type === "parked") o.angle += dir === 1 ? -Math.PI / 2 : Math.PI / 2;
-      }
+      // 轉彎成功：舊街道的障礙物全部清掉，接下來 2 秒不會出現新的（安全時間）
+      // （以前會把舊街道的坑洞轉到新座標，有些會剛好轉到你旁邊的車道，一轉完就撞上）
+      obstacles = [];
+      safeTimer = SAFE_AFTER_TURN;
       for (const s of skids) {
         const p = toNew(s.x, s.y);
         s.x = p.x;
@@ -3310,7 +3312,7 @@
       // 每一項：圖示、標題、說明（說明可以有兩行）
       const items = [
         ["🎯", "目標", ["從台南火車站騎到成大，在上課前平安抵達校門"]],
-        ["🎮", "操作", ["↑ 加速　↓ 煞車（按住）　← → 換車道／騎上人行道", "空白鍵、B 鍵或 🔔 按鈴：讓想切進來、逆向的機車讓開"]],
+        ["🎮", "操作", ["↑/W 加速　↓/S 煞車（按住）　←→/AD 換車道、騎上人行道", "空白鍵、B 鍵或 🔔 按鈴：讓想切進來、逆向的機車讓開"]],
         ["🧭", "轉彎", ["看藍色橫幅 → 切到路面黃色的車道 → 按轉彎方向"]],
         ["🚦", "紅綠燈", ["紅燈停進「機車停等區」，車頭超過紅綠燈那條白線就是闖紅燈"]],
         ["🛵", "小心機車", ["逆向、從後面超車再切進來急煞、巷口衝出、闖紅燈", "注意底部「⚠ 後方來車」，聽到「吱——」要小心"]],
@@ -4116,6 +4118,7 @@
       obstacles = [];
       obstacleTimer = 0;
       nextObstacleTime = 160;
+      safeTimer = 0;
       particles = [];
       popups = [];
       skids = [];
@@ -4301,15 +4304,28 @@
     // 記錄哪些按鍵「正被按住」（加速、煞車要按住才有效）
     const keys = {};
 
+    // WASD 跟方向鍵一樣：W 加速、S 煞車、A / D 換車道（大小寫都可以）
+    const KEY_ALIAS = {
+      w: "ArrowUp", W: "ArrowUp",
+      s: "ArrowDown", S: "ArrowDown",
+      a: "ArrowLeft", A: "ArrowLeft",
+      d: "ArrowRight", D: "ArrowRight"
+    };
+    function normalizeKey(k) {
+      return KEY_ALIAS[k] || k;
+    }
+
     document.addEventListener("keydown", function (event) {
       // 正在輸入名字：鍵盤留給輸入框，遊戲先不理
       if (nameDialogOpen) return;
 
+      const key = normalizeKey(event.key);   // 把 WASD 翻譯成方向鍵
+
       // 方向鍵和空白鍵不要讓網頁捲動
-      if (event.key.startsWith("Arrow") || event.key === " ") {
+      if (key.startsWith("Arrow") || key === " ") {
         event.preventDefault();
       }
-      keys[event.key] = true;
+      keys[key] = true;
 
       // 第一次按鍵時打開聲音（瀏覽器規定）
       Sound.unlock();
@@ -4318,75 +4334,75 @@
       // 換車道只在「剛按下」時算一次，按住不放不會連續換
       if (event.repeat) return;
 
-      if (event.key === "m" || event.key === "M") {
+      if (key === "m" || key === "M") {
         toggleMute();
         return;
       }
 
       // 玩法說明：空白鍵、Enter、Esc 繼續
       if (inHelp) {
-        if (event.key === " " || event.key === "Enter" || event.key === "Escape") closeHelp();
+        if (key === " " || key === "Enter" || key === "Escape") closeHelp();
         return;
       }
 
       // 開場動畫：空白鍵、Enter 跳過；Esc 回選單
       if (inIntro) {
-        if (event.key === " " || event.key === "Enter") endIntro();
-        if (event.key === "Escape") enterMenu();
+        if (key === " " || key === "Enter") endIntro();
+        if (key === "Escape") enterMenu();
         return;
       }
 
       // 排行榜：←→ 切換、Esc / 空白鍵返回、N 改名
       if (inBoard) {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-          boardTab = (boardTab + (event.key === "ArrowLeft" ? 2 : 1)) % BOARD_TABS.length;
+        if (key === "ArrowLeft" || key === "ArrowRight") {
+          boardTab = (boardTab + (key === "ArrowLeft" ? 2 : 1)) % BOARD_TABS.length;
           Sound.click();
         }
-        if (event.key === "Escape" || event.key === " " || event.key === "Enter" || event.key === "l" || event.key === "L") closeBoard();
-        if (event.key === "n" || event.key === "N") showNameDialog(true);
+        if (key === "Escape" || key === " " || key === "Enter" || key === "l" || key === "L") closeBoard();
+        if (key === "n" || key === "N") showNameDialog(true);
         return;
       }
 
       // 選單：↑↓ 選目的地，空白鍵出發，H 看玩法說明，L 看排行榜
       if (inMenu) {
-        if (event.key === "l" || event.key === "L") {
+        if (key === "l" || key === "L") {
           openBoard();
           return;
         }
-        if (event.key === "ArrowUp") {
+        if (key === "ArrowUp") {
           menuIndex = (menuIndex - 1 + DESTINATIONS.length) % DESTINATIONS.length;
           Sound.click();
         }
-        if (event.key === "ArrowDown") {
+        if (key === "ArrowDown") {
           menuIndex = (menuIndex + 1) % DESTINATIONS.length;
           Sound.click();
         }
-        if (event.key === " " || event.key === "Enter") requestStart(menuIndex);
-        if (event.key === "h" || event.key === "H") showHelp("menu");
+        if (key === " " || key === "Enter") requestStart(menuIndex);
+        if (key === "h" || key === "H") showHelp("menu");
         return;
       }
 
       // 結束畫面：空白鍵回選單（播一下才能跳過，免得不小心按掉）
       if (gameOver) {
-        if ((event.key === " " || event.key === "Enter") && resultFrame > 30) enterMenu();
+        if ((key === " " || key === "Enter") && resultFrame > 30) enterMenu();
         return;
       }
 
       // 暫停中：空白鍵回選單、Esc 繼續騎
       if (paused) {
-        if (event.key === " " || event.key === "Enter") enterMenu();
-        if (event.key === "Escape") resumeGame();
+        if (key === " " || key === "Enter") enterMenu();
+        if (key === "Escape") resumeGame();
         return;
       }
 
       // 騎車中按 Esc → 暫停
-      if (event.key === "Escape") {
+      if (key === "Escape") {
         openPause();
         return;
       }
 
       // 按鈴（B 鍵或空白鍵）
-      if (event.key === "b" || event.key === "B" || event.key === " ") {
+      if (key === "b" || key === "B" || key === " ") {
         ringBell();
         return;
       }
@@ -4399,7 +4415,7 @@
       const canQueue = I && !I.passed && I.isRoute && inTurnRange(I);   // 只有導航路口能轉彎
 
       // 車道編號：-1 = 左邊人行道、0 ~ 2 = 馬路、3 = 右邊人行道
-      if (event.key === "ArrowLeft") {
+      if (key === "ArrowLeft") {
         if (player.lane === 0 && canQueue && I.crossDir === -1) {
           turnQueued = -1;                 // 在最左車道、導航要左轉 → 準備左轉
           message = "↰ 準備左轉" + I.name;
@@ -4410,7 +4426,7 @@
           turnQueued = 0;                  // 換車道就取消轉彎
         }
       }
-      if (event.key === "ArrowRight") {
+      if (key === "ArrowRight") {
         if (player.lane === 2 && canQueue && I.crossDir === 1) {
           turnQueued = 1;                  // 在最右車道、導航要右轉 → 準備右轉
           message = "↱ 準備右轉" + I.name;
@@ -4425,7 +4441,8 @@
 
     // 放開按鍵
     document.addEventListener("keyup", function (event) {
-      keys[event.key] = false;
+      const key = normalizeKey(event.key);
+      keys[key] = false;
     });
 
     // ===== 手機觸控 =====
