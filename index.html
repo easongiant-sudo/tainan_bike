@@ -84,6 +84,90 @@
         display: flex;
       }
     }
+
+    /* ===== 輸入名字的對話框（用 HTML 做，才能打中文）===== */
+    #nameDialog {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5, 10, 16, 0.72);
+      z-index: 10;
+      font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    }
+    #nameDialog.show {
+      display: flex;
+    }
+    .dialog-card {
+      width: min(88vw, 360px);
+      background: linear-gradient(#1f2e3d, #141d27);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 18px;
+      padding: 22px 20px;
+      color: #fff;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+      text-align: center;
+    }
+    .dialog-title {
+      font-size: 20px;
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+    .dialog-text {
+      font-size: 14px;
+      color: #b0bec5;
+      line-height: 1.6;
+      margin-bottom: 14px;
+    }
+    #nameInput {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 18px;          /* 16 以上，iPhone 才不會自動放大畫面 */
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 2px solid #607d8b;
+      background: #0d1520;
+      color: #fff;
+      outline: none;
+      text-align: center;
+    }
+    #nameInput:focus {
+      border-color: #69f0ae;
+    }
+    .dialog-error {
+      min-height: 20px;
+      font-size: 13px;
+      color: #ff8a80;
+      margin: 8px 0;
+    }
+    .dialog-buttons {
+      display: flex;
+      gap: 10px;
+    }
+    .dialog-buttons button {
+      flex: 1;
+      font-size: 16px;
+      font-weight: bold;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+    }
+    #nameOk {
+      background: #2e7d32;
+    }
+    #nameOk:disabled {
+      opacity: 0.6;
+    }
+    #nameCancel {
+      background: #455a64;
+      display: none;
+    }
+    #nameCancel.show {
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -102,6 +186,20 @@
     <div class="pad vertical">
       <button data-key="ArrowUp">▲ 加速</button>
       <button data-key="ArrowDown">▼ 煞車</button>
+    </div>
+  </div>
+
+  <!-- 輸入名字（排行榜用）-->
+  <div id="nameDialog">
+    <div class="dialog-card">
+      <div class="dialog-title" id="nameTitle">🚲 歡迎來到台南騎車生存記</div>
+      <div class="dialog-text">請輸入你的名字<br>排行榜會用這個名字，一個名字只能一個人用</div>
+      <input id="nameInput" maxlength="12" placeholder="例如：Eason" autocomplete="off">
+      <div class="dialog-error" id="nameError"></div>
+      <div class="dialog-buttons">
+        <button id="nameCancel">取消</button>
+        <button id="nameOk">確定</button>
+      </div>
     </div>
   </div>
 
@@ -1562,6 +1660,14 @@
     let turning = null;   // 正在轉彎時的資料（沒在轉彎時是 null）
     const TURN_RADIUS = 60;         // 轉彎半徑
 
+    // 路口的地面標線位置（從路口中心往下算幾像素）
+    //   154 ~ 188：斑馬線
+    //   192      ：機車停等區前緣 = 闖紅燈判定線（紅綠燈立在這條線兩邊）
+    //   192 ~ 282：機車停等區（90 像素深，整台腳踏車停得進去）
+    //   284      ：汽車停止線
+    const STOP_LINE = 192;
+    const WAIT_BOX_END = 282;
+
     // 紅綠燈：每種燈亮多久（幀），以及下一個燈是什麼
     const LIGHT_TIME = { green: 300, yellow: 90, red: 300 };
     const NEXT_LIGHT = { green: "yellow", yellow: "red", red: "green" };
@@ -1852,8 +1958,10 @@
       }
 
       // 6. 停止線碰到車頭的那一刻：如果是紅燈 → 你闖紅燈了
-      const stopLineY = I.y + 198;
-      const bikeFront = player.y - 22;
+      // 判定線 = 機車停等區的前緣（紅綠燈就立在這條線兩邊）
+      // 車頭用「菜籃最前面」來算，跟畫面上看到的一樣：整台車停在停等區裡面是合法的
+      const stopLineY = I.y + STOP_LINE;
+      const bikeFront = player.y - 36;
       if (!I.passed && !I.passedStopLine && stopLineY >= bikeFront) {
         I.passedStopLine = true;
         if (I.light === "red") {
@@ -2025,24 +2133,30 @@
       }
 
       if (!I.passed) {
-        // 機車停等區（腳踏車也停這裡）＋ 汽車停止線
+        // 機車停等區（腳踏車也停這裡）：整台車停在框框裡面就是合法的
         ctx.strokeStyle = "rgba(255,255,255,0.92)";
         ctx.lineWidth = 3;
-        ctx.strokeRect(108, I.y + 199, 284, 38);
-        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.strokeRect(108, I.y + STOP_LINE, 284, WAIT_BOX_END - STOP_LINE);
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
         ctx.font = font(15, "bold");
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("機 車 停 等 區", 250, I.y + 219);
+        ctx.fillText("機 車 停 等 區", 250, I.y + (STOP_LINE + WAIT_BOX_END) / 2);
+
+        // 前緣（闖紅燈判定線）畫粗一點，紅燈時變紅色提醒
+        ctx.fillStyle = I.light === "red" ? "rgba(255,82,82,0.95)" : "#fff";
+        ctx.fillRect(106, I.y + STOP_LINE - 3, 288, 6);
+
+        // 汽車停止線
         ctx.fillStyle = "#fff";
-        ctx.fillRect(106, I.y + 241, 288, 6);
+        ctx.fillRect(106, I.y + WAIT_BOX_END + 2, 288, 6);
 
         // 路面上的「慢」字（要轉彎的那條車道畫箭頭，不畫慢字）
         ctx.fillStyle = "rgba(255,255,255,0.72)";
         ctx.font = font(40, "900");
         for (let lane = 0; lane < 3; lane++) {
           if (I.isRoute && !I.handled && lane === (I.crossDir === 1 ? 2 : 0)) continue;
-          ctx.fillText("慢", lanes[lane], I.y + 330);
+          ctx.fillText("慢", lanes[lane], I.y + 360);
         }
       }
 
@@ -2128,8 +2242,8 @@
       drawSignalHead(300, far, I, 1, false);
       drawSignalHead(150, far, I, 0.85, false);
 
-      // 2. 路口「這一側」的燈：立在兩邊路緣，從遠處就看得到，停下來時也不會擋到你
-      const near = I.y + 262;
+      // 2. 路口「這一側」的燈：立在兩邊路緣、對齊停等區前緣（車頭超過這裡就是闖紅燈）
+      const near = I.y + STOP_LINE;
       line(438, near, 404, near);
       line(62, near, 96, near);
       ctx.fillStyle = "#3c4043";
@@ -2153,8 +2267,8 @@
       const x = lanes[I.crossDir === 1 ? 2 : 0];
       const pulse = 0.2 + Math.sin(frameCount * 0.1) * 0.07;
       ctx.fillStyle = "rgba(255,213,79," + pulse + ")";
-      ctx.fillRect(x - 46, I.y + 250, 92, 520);
-      for (let y = I.y + 310; y < I.y + 770; y += 150) {
+      ctx.fillRect(x - 46, I.y + WAIT_BOX_END + 8, 92, 520);
+      for (let y = I.y + 350; y < I.y + 800; y += 150) {
         drawTurnArrow(x, y, I.crossDir, "rgba(255,255,255,0.9)", 1);
       }
     }
@@ -2462,6 +2576,7 @@
     }
 
     function endGame(reason) {
+      Board.flush();   // 結束時把遊玩時間上傳
       gameOver = true;
       gameOverReason = reason;
       resultFrame = 0;
@@ -2485,9 +2600,13 @@
         const total = rows.reduce((sum, r) => sum + r[2], 0);
         const stars = Math.max(1, lives - (late ? 1 : 0));   // 剩幾條命就幾顆星，遲到扣一顆
         const isNew = saveRecord(DESTINATIONS.indexOf(dest), total, stars);
-        result = { rows: rows, total: total, stars: stars, late: late, usedSec: usedSec, limit: limit, isNew: isNew };
+        result = { rows: rows, total: total, stars: stars, late: late, usedSec: usedSec, limit: limit, isNew: isNew, rankText: "" };
         Sound.fanfare();
         spawnConfetti();
+
+        // 最難的兩關（力行、歸仁）：分數上傳排行榜
+        const level = RANKED[DESTINATIONS.indexOf(dest)];
+        if (level && Board.name) Board.submitScore(level, total, result);
       } else {
         const left = Math.round((1 - routeProgress()) * totalLength(dest) / 10);
         result = { meters: meters, left: left, score: liveScore(), tip: pick(TIPS) };
@@ -2500,7 +2619,7 @@
       "看到機車「切進來」就煞車，或按 🔔 讓它讓開",
       "畫面底部出現「後方來車」時，先別換車道",
       "時速低於 8 km/h 時機車會繞過你（🛡️）",
-      "紅燈停在停止線前 60 公分內，有「完美停車」加分",
+      "紅燈時停進機車停等區、車頭靠近白線，有「完美停車」加分",
       "人行道上的坑洞很小，樹蔭下更要小心",
       "聽到「吱——」的煞車聲，代表前面有人急煞"
     ];
@@ -2519,6 +2638,7 @@
     const SOUND_BUTTON = { x: 8, y: 40, w: 46, h: 28 };
     const MENU_HELP_BUTTON = { x: 8, y: 8, w: 72, h: 28 };
     const MENU_SOUND_BUTTON = { x: 446, y: 8, w: 46, h: 28 };
+    const MENU_BOARD_BUTTON = { x: 8, y: 42, w: 72, h: 26 };
     const PAUSE_MENU_BUTTON = { x: 70, y: 330, w: 170, h: 60 };
     const PAUSE_RESUME_BUTTON = { x: 260, y: 330, w: 170, h: 60 };
 
@@ -2931,10 +3051,15 @@
         ctx.fillText("★", 0, 0);
         ctx.restore();
       }
-      if (R.isNew && f > 165) {
-        ctx.fillStyle = Math.floor(frameCount / 10) % 2 ? "#ff5252" : "#ffd740";
-        ctx.font = font(15, "900");
-        ctx.fillText("🏆 新紀錄！", 250, 518);
+      if (f > 165) {
+        const lines = [];
+        if (R.isNew) lines.push(["🎊 個人新紀錄！", Math.floor(frameCount / 10) % 2 ? "#ff5252" : "#ffd740", font(14, "900")]);
+        if (R.rankText) lines.push([R.rankText, "#80d8ff", font(13, "bold")]);
+        lines.forEach(([text, color, f2], i) => {
+          ctx.fillStyle = color;
+          ctx.font = f2;
+          ctx.fillText(text, 250, lines.length === 2 ? 507 + i * 19 : 516);
+        });
       }
     }
 
@@ -2960,7 +3085,7 @@
       ctx.fillText("🏥 已送往成大醫院", 250, 268);
       ctx.fillStyle = "#cfd8dc";
       ctx.font = font(15);
-      ctx.fillText("紅燈要停在「機車停等區」前，生命只有一條", 250, 312);
+      ctx.fillText("紅燈時車頭不要超過停等區的白線，生命只有一條", 250, 312);
       ctx.fillStyle = "#90a4ae";
       ctx.font = font(14);
       ctx.fillText("騎了 " + result.meters + " m，離" + dest.campus + "還有 " + result.left + " m", 250, 362);
@@ -3036,7 +3161,16 @@
       ctx.fillText("從台南火車站出發，平安又準時地去成大上課！", 250, 70);
 
       drawButton(MENU_HELP_BUTTON, "❓ 玩法", "rgba(14,20,28,0.85)", 13);
+      drawButton(MENU_BOARD_BUTTON, "🏆 排行", "rgba(120,80,0,0.9)", 13);
       drawIconButton(MENU_SOUND_BUTTON, soundIcon());
+
+      // 玩家名字
+      if (Board.name) {
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#cfd8dc";
+        ctx.font = font(11, "bold");
+        ctx.fillText("👤 " + Board.name, 492, 54);
+      }
 
       // 每個目的地一張卡片
       const records = loadRecords();
@@ -3076,7 +3210,7 @@
         ctx.textAlign = "left";
         ctx.fillStyle = "#fff";
         ctx.font = font(16, "bold");
-        ctx.fillText(d.campus + "・" + d.building, 42, top + 16);
+        ctx.fillText((RANKED[i] ? "🏆 " : "") + d.campus + "・" + d.building, 42, top + 16);
         ctx.textAlign = "right";
         ctx.font = font(14);
         ctx.fillStyle = "#ffd740";
@@ -3114,7 +3248,7 @@
       if (isTouch()) {
         ctx.fillText("👆 點目的地出發", 250, 572);
       } else {
-        ctx.fillText("↑↓ 選擇　空白鍵 出發　H 玩法　M 音效", 250, 572);
+        ctx.fillText("↑↓ 選擇　空白鍵 出發　H 玩法　L 排行榜　M 音效", 250, 572);
       }
     }
 
@@ -3176,13 +3310,13 @@
       // 每一項：圖示、標題、說明（說明可以有兩行）
       const items = [
         ["🎯", "目標", ["從台南火車站騎到成大，在上課前平安抵達校門"]],
-        ["🎮", "操作", ["↑ 加速　↓ 煞車（按住）　← → 換車道／騎上人行道", "B 鍵或 🔔 按鈴：讓想切進來、逆向的機車讓開"]],
+        ["🎮", "操作", ["↑ 加速　↓ 煞車（按住）　← → 換車道／騎上人行道", "空白鍵、B 鍵或 🔔 按鈴：讓想切進來、逆向的機車讓開"]],
         ["🧭", "轉彎", ["看藍色橫幅 → 切到路面黃色的車道 → 按轉彎方向"]],
-        ["🚦", "紅綠燈", ["紅燈停在「機車停等區」前，闖紅燈會被撞、直接送醫院"]],
+        ["🚦", "紅綠燈", ["紅燈停進「機車停等區」，車頭超過紅綠燈那條白線就是闖紅燈"]],
         ["🛵", "小心機車", ["逆向、從後面超車再切進來急煞、巷口衝出、闖紅燈", "注意底部「⚠ 後方來車」，聽到「吱——」要小心"]],
         ["🛡️", "騎慢比較安全", ["時速低於 8 km/h，機車會繞過你，但太慢會遲到"]],
         ["🧱", "人行道", ["有很小的坑洞、翹起的地磚和違停機車，樹蔭下更難看清楚"]],
-        ["⭐", "計分", ["驚險閃過機車 +50、紅燈完美停車 +100、按鈴示警 +30", "準時抵達還有時間和生命加分，挑戰每條路線的最高分！"]],
+        ["⭐", "計分", ["驚險閃過機車 +50、紅燈完美停車 +100、按鈴示警 +30", "🏆 力行、歸仁校區的分數和總遊玩時間會上排行榜（L 鍵）"]],
         ["❤️", "命", ["3 條命，撞到扣 1 條；剩幾條命拿幾顆星，遲到扣 1 顆"]]
       ];
 
@@ -3541,12 +3675,426 @@
       }
     }
 
+    // ===== 玩家名字與排行榜 =====
+    // 排行榜存在 Vercel 的伺服器（api/leaderboard.js + Upstash Redis）
+    // 連不上伺服器時（例如直接打開檔案），改成只記在這台電腦，遊戲照樣能玩
+
+    const RANKED = { 5: "lixing", 6: "guiren" };   // 只有最難的兩關（力行、歸仁）上分數榜
+    const BOARD_TABS = [
+      { key: "lixing", title: "力行校區 分數", unit: "score", campus: "力行校區" },
+      { key: "guiren", title: "歸仁校區 分數", unit: "score", campus: "歸仁校區" },
+      { key: "playtime", title: "⏱ 遊玩時間", unit: "time" }
+    ];
+    const API_URL = "/api/leaderboard";
+
+    const Board = {
+      online: null,      // null = 還在連線、true = 連上排行榜伺服器、false = 離線（只記在這台電腦）
+      name: storeGet("tainanBikeName"),
+      token: storeGet("tainanBikeToken"),
+      data: null,        // 目前顯示的排行榜資料
+      loading: false,
+      pendingSeconds: 0, // 還沒上傳的遊玩秒數
+      playFrames: 0,
+      flushing: false,
+      localCache: null,
+
+      // 每台電腦一組隨機密碼：證明「這個名字是我的」，別人就不能用你的名字上傳
+      ensureToken() {
+        if (this.token) return;
+        const bytes = new Uint8Array(24);
+        (window.crypto || window.msCrypto).getRandomValues(bytes);
+        this.token = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+        storeSet("tainanBikeToken", this.token);
+      },
+
+      async request(method, body) {
+        if (location.protocol === "file:") throw new Error("offline");
+        let url = API_URL;
+        const opts = { method: method, headers: { "Content-Type": "application/json" } };
+        if (method === "GET") {
+          url += "?name=" + encodeURIComponent(this.name || "");
+        } else {
+          opts.keepalive = true;   // 關掉網頁時也能把最後的資料送出去
+          opts.body = JSON.stringify(Object.assign({ name: this.name, token: this.token }, body));
+        }
+        const res = await fetch(url, opts);
+        let data = {};
+        try { data = await res.json(); } catch (e) {}
+        if (res.status === 404 || res.status >= 500) throw new Error("offline");
+        return { status: res.status, data: data };
+      },
+
+      // 打開網頁時：看看排行榜伺服器在不在；名字不見了（被別人註冊走）就請你換一個
+      async init() {
+        try {
+          const r = await this.request("GET");
+          this.online = r.status === 200;
+          if (this.online) this.data = r.data;
+        } catch (e) {
+          this.online = false;
+        }
+        if (this.online && this.name) {
+          this.ensureToken();
+          try {
+            const r = await this.request("POST", { action: "register" });
+            if (r.status === 409) showNameDialog(false, "「" + this.name + "」已經有人用了，請換一個名字");
+          } catch (e) {}
+        }
+      },
+
+      // 註冊名字：成功回傳 "ok"，被別人用走了回傳 "taken"
+      async register(name) {
+        this.ensureToken();
+        const old = this.name;
+        this.name = name;
+        if (this.online !== false) {
+          try {
+            const r = await this.request("POST", { action: "register" });
+            if (r.status === 409) {
+              this.name = old;
+              return "taken";
+            }
+            if (r.status === 200) this.online = true;
+          } catch (e) {
+            this.online = false;
+          }
+        }
+        storeSet("tainanBikeName", name);
+        return "ok";
+      },
+
+      // ----- 這台電腦自己的紀錄（離線時用來排名）-----
+      localData() {
+        if (!this.localCache) {
+          try {
+            this.localCache = JSON.parse(storeGet("tainanBikeLocalBoard") || "{}");
+          } catch (e) {
+            this.localCache = {};
+          }
+        }
+        return this.localCache;
+      },
+      saveLocal() {
+        storeSet("tainanBikeLocalBoard", JSON.stringify(this.localData()));
+      },
+
+      // 完成力行、歸仁時上傳分數（結算畫面會顯示名次）
+      async submitScore(level, score, res) {
+        const b = this.localData();
+        b[level] = b[level] || {};
+        b[level][this.name] = Math.max(b[level][this.name] || 0, score);
+        this.saveLocal();
+        if (!this.online) {
+          res.rankText = "📴 離線：分數記在這台電腦";
+          return;
+        }
+        res.rankText = "📡 上傳排行榜中…";
+        try {
+          const r = await this.request("POST", { action: "score", level: level, score: score });
+          if (r.status === 200) res.rankText = "🏆 排行榜第 " + r.data.rank + " 名（共 " + r.data.total + " 人）";
+          else res.rankText = "⚠️ 排行榜上傳失敗";
+        } catch (e) {
+          this.online = false;
+          res.rankText = "📴 離線：分數記在這台電腦";
+        }
+      },
+
+      // 遊玩時間：騎車中每 60 幀（1 秒）加 1，攢到 30 秒上傳一次
+      tickPlay() {
+        if (!this.name) return;
+        this.playFrames++;
+        if (this.playFrames < 60) return;
+        this.playFrames = 0;
+        const b = this.localData();
+        b.playtime = b.playtime || {};
+        b.playtime[this.name] = (b.playtime[this.name] || 0) + 1;
+        this.pendingSeconds++;
+        if (this.pendingSeconds % 10 === 0) this.saveLocal();
+        if (this.pendingSeconds >= 30) this.flush();
+      },
+
+      async flush() {
+        this.saveLocal();
+        if (!this.online) {
+          this.pendingSeconds = 0;   // 離線：已經記在這台電腦了
+          return;
+        }
+        if (!this.name || this.pendingSeconds < 1 || this.flushing) return;
+        const seconds = this.pendingSeconds;
+        this.pendingSeconds = 0;
+        this.flushing = true;
+        try {
+          const r = await this.request("POST", { action: "time", seconds: seconds });
+          if (r.status !== 200) this.pendingSeconds += seconds;
+        } catch (e) {
+          this.pendingSeconds += seconds;
+        }
+        this.flushing = false;
+      },
+
+      // 重新讀取排行榜
+      async refresh() {
+        this.loading = true;
+        if (this.online) {
+          try {
+            const r = await this.request("GET");
+            if (r.status === 200) this.data = r.data;
+          } catch (e) {
+            this.online = false;
+          }
+        }
+        if (!this.online) this.data = this.localView();
+        this.loading = false;
+      },
+
+      // 用這台電腦的紀錄排出名次（離線模式）
+      localView() {
+        const b = this.localData();
+        const view = {};
+        for (const t of BOARD_TABS) {
+          const entries = Object.entries(b[t.key] || {})
+            .map(([name, value]) => ({ name: name, value: value }))
+            .sort((a, c) => c.value - a.value);
+          const idx = entries.findIndex(e => e.name === this.name);
+          view[t.key] = {
+            top: entries.slice(0, 5),
+            total: entries.length,
+            me: idx >= 0 ? { rank: idx + 1, value: entries[idx].value } : null
+          };
+        }
+        return view;
+      }
+    };
+
+    // 秒數 → 「1 小時 3 分」、「5 分 20 秒」
+    function formatDuration(sec) {
+      sec = Math.floor(sec);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) return h + " 小時 " + m + " 分";
+      if (m > 0) return m + " 分 " + s + " 秒";
+      return s + " 秒";
+    }
+
+    // ----- 輸入名字的對話框 -----
+    let nameDialogOpen = false;
+    let nameIsRename = false;
+    const nameDialog = document.getElementById("nameDialog");
+    const nameInput = document.getElementById("nameInput");
+    const nameError = document.getElementById("nameError");
+    const nameOk = document.getElementById("nameOk");
+    const nameCancel = document.getElementById("nameCancel");
+
+    function showNameDialog(rename, errorText) {
+      nameDialogOpen = true;
+      nameIsRename = rename;
+      for (const k in keys) keys[k] = false;
+      document.getElementById("nameTitle").textContent = rename ? "✏️ 改名字" : "🚲 歡迎來到台南騎車生存記";
+      nameInput.value = rename ? (Board.name || "") : "";
+      nameError.textContent = errorText || "";
+      nameCancel.classList.toggle("show", rename);
+      nameDialog.classList.add("show");
+      setTimeout(() => nameInput.focus(), 50);
+    }
+
+    function closeNameDialog() {
+      nameDialogOpen = false;
+      nameDialog.classList.remove("show");
+      nameInput.blur();
+    }
+
+    async function submitName() {
+      const name = nameInput.value.normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      if (!name) {
+        nameError.textContent = "請輸入名字";
+        return;
+      }
+      if (Array.from(name).length > 12) {
+        nameError.textContent = "名字最多 12 個字";
+        return;
+      }
+      if (name === Board.name && Board.online !== null) {
+        closeNameDialog();
+        return;
+      }
+      nameOk.disabled = true;
+      nameError.textContent = "確認中…";
+      const r = await Board.register(name);
+      nameOk.disabled = false;
+      if (r === "taken") {
+        nameError.textContent = "「" + name + "」已經有人用了，請換一個名字";
+        return;
+      }
+      closeNameDialog();
+      Sound.unlock();
+      Sound.confirm();
+      if (inBoard) Board.refresh();
+    }
+
+    nameOk.addEventListener("click", submitName);
+    nameCancel.addEventListener("click", closeNameDialog);
+    nameInput.addEventListener("keydown", function (event) {
+      event.stopPropagation();   // 打字時不要觸發遊戲按鍵
+      if (event.key === "Enter" && !event.isComposing) submitName();
+      if (event.key === "Escape" && nameIsRename) closeNameDialog();
+    });
+
+    // ----- 排行榜畫面 -----
+    let inBoard = false;
+    let boardTab = 0;
+
+    const BOARD_TAB_BUTTONS = [0, 1, 2].map(i => ({ x: 20 + i * 156, y: 104, w: 148, h: 36 }));
+    const BOARD_BACK_BUTTON = { x: 150, y: 540, w: 200, h: 40 };
+    const BOARD_RENAME_BUTTON = { x: 392, y: 60, w: 92, h: 28 };
+
+    function openBoard() {
+      inMenu = false;
+      inBoard = true;
+      Board.refresh();
+      Sound.confirm();
+    }
+
+    function closeBoard() {
+      inBoard = false;
+      inMenu = true;
+    }
+
+    function drawBoard() {
+      const bg = ctx.createLinearGradient(0, 0, 0, H);
+      bg.addColorStop(0, "#1b2a38");
+      bg.addColorStop(1, "#0f1720");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      ctx.fillStyle = "#fff";
+      ctx.font = font(28, "900");
+      ctx.fillText("🏆 排行榜", 250, 32);
+
+      // 連線狀態
+      ctx.font = font(12);
+      if (Board.online === null) {
+        ctx.fillStyle = "#b0bec5";
+        ctx.fillText("連線中…", 250, 60);
+      } else if (Board.online) {
+        ctx.fillStyle = "#69f0ae";
+        ctx.fillText("🌐 全部玩家一起比", 250, 60);
+      } else {
+        ctx.fillStyle = "#ffab40";
+        ctx.fillText("📴 離線模式：只有這台電腦的紀錄", 250, 60);
+      }
+
+      // 我的名字、改名
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#cfd8dc";
+      ctx.font = font(13, "bold");
+      ctx.fillText("👤 " + (Board.name || "—"), 22, 76);
+      drawButton(BOARD_RENAME_BUTTON, "✏️ 改名", "rgba(55,71,79,0.95)", 13);
+
+      // 分頁
+      for (let i = 0; i < BOARD_TABS.length; i++) {
+        const b = BOARD_TAB_BUTTONS[i];
+        const active = i === boardTab;
+        rr(b.x, b.y, b.w, b.h, 10);
+        ctx.fillStyle = active ? "#2e7d32" : "rgba(38,56,72,0.95)";
+        ctx.fill();
+        ctx.strokeStyle = active ? "#69f0ae" : "rgba(255,255,255,0.12)";
+        ctx.lineWidth = active ? 2 : 1;
+        ctx.stroke();
+        ctx.fillStyle = "#fff";
+        ctx.font = font(14, "bold");
+        ctx.textAlign = "center";
+        ctx.fillText(BOARD_TABS[i].title, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      }
+
+      const tab = BOARD_TABS[boardTab];
+      const info = Board.data && Board.data[tab.key];
+      const fmt = v => tab.unit === "time" ? formatDuration(v) : Math.round(v).toLocaleString() + " 分";
+
+      // 前五名
+      rr(20, 152, 460, 300, 14);
+      ctx.fillStyle = "rgba(14,20,28,0.8)";
+      ctx.fill();
+      ctx.textAlign = "center";
+      if (!info) {
+        ctx.fillStyle = "#b0bec5";
+        ctx.font = font(15);
+        ctx.fillText(Board.loading || Board.online === null ? "讀取中…" : "讀不到排行榜", 250, 300);
+      } else if (info.top.length === 0) {
+        ctx.fillStyle = "#b0bec5";
+        ctx.font = font(15);
+        ctx.fillText("還沒有人上榜，快來搶第一！", 250, 300);
+      } else {
+        const medals = ["🥇", "🥈", "🥉", "4", "5"];
+        for (let i = 0; i < info.top.length; i++) {
+          const e = info.top[i];
+          const y = 182 + i * 56;
+          if (e.name === Board.name) {
+            rr(30, y - 24, 440, 48, 10);
+            ctx.fillStyle = "rgba(105,240,174,0.16)";
+            ctx.fill();
+          }
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#ffd740";
+          ctx.font = i < 3 ? font(24) : font(18, "900");
+          ctx.fillText(medals[i], 62, y);
+          ctx.textAlign = "left";
+          ctx.fillStyle = "#fff";
+          ctx.font = font(17, "bold");
+          ctx.fillText(e.name + (e.name === Board.name ? "（你）" : ""), 96, y);
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#ffd740";
+          ctx.font = font(16, "bold");
+          ctx.fillText(fmt(e.value), 456, y);
+        }
+      }
+
+      // 我的名次
+      rr(20, 464, 460, 60, 14);
+      ctx.fillStyle = "rgba(14,20,28,0.8)";
+      ctx.fill();
+      ctx.textAlign = "center";
+      const me = info && info.me;
+      if (!info) {
+        // 還在讀取
+      } else if (!me) {
+        ctx.fillStyle = "#cfd8dc";
+        ctx.font = font(15, "bold");
+        ctx.fillText("你還沒有紀錄", 250, 484);
+        ctx.fillStyle = "#90a4ae";
+        ctx.font = font(12);
+        ctx.fillText(tab.unit === "time" ? "開始騎車就會累積遊玩時間" : "完成「" + tab.campus + "」就能上榜", 250, 506);
+      } else if (me.rank <= 5) {
+        ctx.fillStyle = "#69f0ae";
+        ctx.font = font(17, "900");
+        ctx.fillText("🎉 你是第 " + me.rank + " 名！（共 " + info.total + " 人）", 250, 494);
+      } else {
+        ctx.fillStyle = "#fff";
+        ctx.font = font(15, "bold");
+        ctx.fillText("你的名次：第 " + me.rank + " 名（共 " + info.total + " 人）", 250, 484);
+        ctx.fillStyle = "#ffd740";
+        ctx.font = font(14, "bold");
+        ctx.fillText(fmt(me.value), 250, 506);
+      }
+
+      drawButton(BOARD_BACK_BUTTON, "← 回到選單", "#37474f", 16);
+      if (!isTouch()) {
+        ctx.fillStyle = "#90a4ae";
+        ctx.font = font(12);
+        ctx.textAlign = "center";
+        ctx.fillText("←→ 切換排行榜　Esc 返回　N 改名", 250, 592);
+      }
+    }
+
     // ===== 開始一局、重新開始、回到選單 =====
 
     function startGame(index) {
       dest = DESTINATIONS[index];
       resetGame();
       inMenu = false;
+      inBoard = false;
       message = "🎯 目的地：" + dest.campus + "・" + dest.building;
       messageTimer = 120;
       Music.start();
@@ -3616,7 +4164,9 @@
     }
 
     function enterMenu() {
+      Board.flush();   // 回選單時把遊玩時間上傳
       inMenu = true;
+      inBoard = false;
       inIntro = false;
       inHelp = false;
       paused = false;
@@ -3637,7 +4187,7 @@
 
     // 正在騎車（不是選單、說明、動畫、結束畫面）
     function isPlaying() {
-      return !inMenu && !inHelp && !inIntro && !gameOver;
+      return !inMenu && !inHelp && !inIntro && !inBoard && !gameOver;
     }
 
     function toggleMute() {
@@ -3693,6 +4243,7 @@
         if (introFrame >= INTRO_LENGTH) endIntro();
         return;
       }
+      if (inBoard) return;
       if (inMenu) {
         // 選單背景的街道慢慢往前捲
         scrollGround(1.6);
@@ -3706,6 +4257,7 @@
         updateConfetti();
         return;
       }
+      Board.tickPlay();   // 只有真的在騎車才算遊玩時間
       update();
     }
 
@@ -3714,6 +4266,7 @@
       ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);   // 之後都用 500 × 600 的座標畫
       if (inHelp) drawHelp();
       else if (inIntro) drawIntro();
+      else if (inBoard) drawBoard();
       else if (inMenu) drawMenu();
       else {
         draw();
@@ -3749,6 +4302,9 @@
     const keys = {};
 
     document.addEventListener("keydown", function (event) {
+      // 正在輸入名字：鍵盤留給輸入框，遊戲先不理
+      if (nameDialogOpen) return;
+
       // 方向鍵和空白鍵不要讓網頁捲動
       if (event.key.startsWith("Arrow") || event.key === " ") {
         event.preventDefault();
@@ -3780,8 +4336,23 @@
         return;
       }
 
-      // 選單：↑↓ 選目的地，空白鍵出發，H 看玩法說明
+      // 排行榜：←→ 切換、Esc / 空白鍵返回、N 改名
+      if (inBoard) {
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          boardTab = (boardTab + (event.key === "ArrowLeft" ? 2 : 1)) % BOARD_TABS.length;
+          Sound.click();
+        }
+        if (event.key === "Escape" || event.key === " " || event.key === "Enter" || event.key === "l" || event.key === "L") closeBoard();
+        if (event.key === "n" || event.key === "N") showNameDialog(true);
+        return;
+      }
+
+      // 選單：↑↓ 選目的地，空白鍵出發，H 看玩法說明，L 看排行榜
       if (inMenu) {
+        if (event.key === "l" || event.key === "L") {
+          openBoard();
+          return;
+        }
         if (event.key === "ArrowUp") {
           menuIndex = (menuIndex - 1 + DESTINATIONS.length) % DESTINATIONS.length;
           Sound.click();
@@ -3814,8 +4385,8 @@
         return;
       }
 
-      // 按鈴
-      if (event.key === "b" || event.key === "B") {
+      // 按鈴（B 鍵或空白鍵）
+      if (event.key === "b" || event.key === "B" || event.key === " ") {
         ringBell();
         return;
       }
@@ -3892,14 +4463,29 @@
       const x = (event.clientX - rect.left - canvas.clientLeft) * W / canvas.clientWidth;
       const y = (event.clientY - rect.top - canvas.clientTop) * H / canvas.clientHeight;
 
+      if (nameDialogOpen) return;
+
       if (inHelp) {
         closeHelp();                         // 說明畫面：點一下繼續
       } else if (inIntro) {
         if (inButton(HOME_BUTTON, x, y)) enterMenu();   // 點 🏠 回選單
         else endIntro();                                  // 點其他地方跳過動畫
+      } else if (inBoard) {
+        if (inButton(BOARD_BACK_BUTTON, x, y)) closeBoard();
+        else if (inButton(BOARD_RENAME_BUTTON, x, y)) showNameDialog(true);
+        for (let i = 0; i < BOARD_TAB_BUTTONS.length; i++) {
+          if (inButton(BOARD_TAB_BUTTONS[i], x, y)) {
+            boardTab = i;
+            Sound.click();
+          }
+        }
       } else if (inMenu) {
         if (inButton(MENU_SOUND_BUTTON, x, y)) {
           toggleMute();
+          return;
+        }
+        if (inButton(MENU_BOARD_BUTTON, x, y)) {
+          openBoard();
           return;
         }
         if (inButton(MENU_HELP_BUTTON, x, y) || y < 85) {
@@ -3930,6 +4516,7 @@
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) {
         if (isPlaying() && !paused) openPause();
+        Board.flush();   // 離開網頁前把遊玩時間送出去
         if (Sound.ctx) Sound.ctx.suspend();
       } else if (Sound.ctx) {
         Sound.ctx.resume();
@@ -3943,6 +4530,10 @@
     Sound.muted = storeGet("tainanBikeMuted") === "1";
     enterMenu();
     requestAnimationFrame(frame);
+
+    // 第一次來先問名字；然後連線排行榜伺服器
+    if (!Board.name) showNameDialog(false);
+    Board.init();
   </script>
 </body>
 </html>
